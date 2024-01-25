@@ -122,6 +122,54 @@ static constexpr Cmd cmdPFRMailboxRead = 0x84;
 
 } // namespace intel
 
+namespace general
+{
+static constexpr Cmd cmdOEMSetFirewallConfiguration = 0x76;
+static constexpr Cmd cmdOEMGetFirewallConfiguration = 0x77;
+static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
+static constexpr Cmd cmdOEMSetSELPolicy = 0x7F;
+
+namespace network
+{
+static constexpr const char* phosphorNetworkService = "xyz.openbmc_project.Network";
+static constexpr const char* firewallConfigurationObj = "/xyz/openbmc_project/network/firewall";
+static constexpr const char* firewallConfigurationIntf = "xyz.openbmc_project.Network.FirewallConfiguration";
+
+
+enum class FirewallFlags : uint8_t
+{
+    PROTOCOL = 0x01,
+    IP = 0x02,
+    PORT = 0x04,
+    MAC = 0x08,
+    TIMEOUT = 0x10,
+};
+
+enum class SetFirewallOEMParam : uint16_t
+{
+    PARAM_TARGET,
+    PARAM_PROTOCOL,
+    PARAM_START_SOURCE_IP_ADDR,
+    PARAM_END_SOURCE_IP_ADDR,
+    PARAM_START_PORT,
+    PARAM_END_PORT,
+    PARAM_SOURCE_MAC_ADDR,
+    PARAM_START_TIME,
+    PARAM_END_TIME,
+    PARAM_APPLY,
+    PARAM_FLUSH,
+};
+
+enum class GetFirewallOEMParam : uint16_t
+{
+    PARAM_RULE_NUMBER,
+    PARAM_IPV4_RULE,
+    PARAM_IPV6_RULE,
+};
+} // namespace network
+} // namespace general
+} // namespace ami
+
 } // namespace ipmi
 
 // FIXME: put these in the cpp files that use them

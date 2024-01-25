@@ -41,6 +41,7 @@
 #include <xyz/openbmc_project/Control/PowerSupplyRedundancy/server.hpp>
 #include <xyz/openbmc_project/Control/Security/RestrictionMode/server.hpp>
 #include <xyz/openbmc_project/Control/Security/SpecialMode/server.hpp>
+#include <xyz/openbmc_project/Network/FirewallConfiguration/server.hpp>
 
 #include <array>
 #include <filesystem>
@@ -51,6 +52,8 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <netinet/ether.h>
+#include <cstring>
 
 namespace ipmi
 {
@@ -3996,6 +3999,417 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 }
 
+ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t parameter, message::Payload& req) {
+    message::Payload ret;
+    using FirewallIface = sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
+    static struct FirewallProperties {
+        std::string target;
+        uint8_t control;
+        std::string protocol;
+        std::string startIPAddr;
+        std::string endIPAddr;
+        uint16_t startPort;
+        uint16_t endPort;
+        std::string macAddr;
+        std::string startTime;
+        std::string endTime;
+    } properties;
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    switch (static_cast<ami::general::network::SetFirewallOEMParam>(parameter))
+    {
+        case ami::general::network::SetFirewallOEMParam::PARAM_TARGET:
+        {
+            uint8_t target;
+            if (req.unpack(target) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            }
+
+            try {
+                properties.target = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::Target>(target));
+            } catch (const std::exception& e) {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_PROTOCOL:
+        {
+            uint8_t protocol;
+            if (req.unpack(protocol) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            }
+
+            try {
+                properties.protocol = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::Protocol>(protocol));
+            } catch (const std::exception& e) {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL);
+
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_START_SOURCE_IP_ADDR:
+        case ami::general::network::SetFirewallOEMParam::PARAM_END_SOURCE_IP_ADDR:
+        {
+            std::variant<in_addr, in6_addr> ipAddr;
+            std::array<uint8_t, sizeof(in_addr)> ipv4Bytes;
+            std::array<uint8_t, sizeof(in6_addr)> ipv6Bytes;
+            char tmp[128];
+            bool isIPv4 = true;
+            memset(tmp, 0, sizeof(tmp));
+            try {
+                if (req.size() - req.rawIndex == sizeof(in_addr)) {
+                    if (req.unpack(ipv4Bytes) != 0 || !req.fullyUnpacked()) {
+                        return responseReqDataLenInvalid();
+                    } // if
+                    in_addr addr;
+                    std::memcpy(&addr, ipv4Bytes.data(), ipv4Bytes.size());
+                    if (!inet_ntop(AF_INET, &addr, tmp, sizeof(tmp))) {
+                        return responseInvalidFieldRequest();
+                    } // if
+                    isIPv4 = true;
+                    ipAddr =std::move(addr);
+                } // if
+                else if (req.size() - req.rawIndex  == sizeof(in6_addr)) {
+                    if (req.unpack(ipv6Bytes) != 0 || !req.fullyUnpacked()) {
+                        return responseReqDataLenInvalid();
+                    } // if
+                    in6_addr addr;
+                    std::memcpy(&addr, ipv6Bytes.data(), ipv6Bytes.size());
+                    if (!inet_ntop(AF_INET6, &addr, tmp, sizeof(tmp))) {
+                        return responseInvalidFieldRequest();
+                    } // if
+                    isIPv4 = false;
+                    ipAddr =std::move(addr);
+                } // else if
+                else {
+                    req.trailingOk = true;
+                    return responseReqDataLenInvalid();
+                }
+            } catch (const std::exception& e) {
+                return ipmi::responseResponseError();
+            }
+
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_SOURCE_IP_ADDR) {
+                if (!properties.endIPAddr.empty()) {
+                    if ((isIPv4 && properties.endIPAddr.find(":") == std::string::npos)
+                        || (!isIPv4 && properties.endIPAddr.find(":") != std::string::npos) ) {
+                        return responseInvalidFieldRequest();
+                    }
+                }
+                properties.startIPAddr = tmp;
+            }
+            else {
+                if (!properties.endIPAddr.empty()) {
+                    if ((isIPv4 && properties.endIPAddr.find(":") == std::string::npos)
+                        || (!isIPv4 && properties.endIPAddr.find(":") != std::string::npos) ) {
+                        return responseInvalidFieldRequest();
+                    }
+                }
+                properties.endIPAddr = tmp;
+            }
+
+            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::IP);
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_START_PORT:
+        case ami::general::network::SetFirewallOEMParam::PARAM_END_PORT:
+        {
+            uint16_t port;
+            std::array<uint8_t, sizeof(uint16_t)> portBytes;
+            if (req.unpack(portBytes) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            } // if
+
+            std::memcpy(&port, portBytes.data(), portBytes.size());
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_PORT)
+                properties.startPort = ntohs(port);
+            else
+                properties.endPort = ntohs(port);
+            
+            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PORT);
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_SOURCE_MAC_ADDR:
+        {
+            std::array<uint8_t, sizeof(ether_addr)> macBytes;
+            ether_addr mac;
+            if (req.unpack(macBytes) != 0 || !req.fullyUnpacked()) {
+                    return responseReqDataLenInvalid();
+            } // if
+
+            std::memcpy(&mac, macBytes.data(), macBytes.size());
+            properties.macAddr = ether_ntoa(&mac);
+            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::MAC);
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_START_TIME:
+        case ami::general::network::SetFirewallOEMParam::PARAM_END_TIME:
+        {
+            uint16_t year;
+            uint8_t month, date, hour, min, sec;
+            std::array<uint8_t, sizeof(uint16_t)> yearBytes;
+            char tmp[128];
+            memset(tmp, 0, sizeof(tmp));
+            if (req.unpack(yearBytes, month, date, hour, min, sec) != 0 || !req.fullyUnpacked()) {
+                    return responseReqDataLenInvalid();
+            } // if
+
+            std::memcpy(&year, yearBytes.data(), yearBytes.size());
+            memset(tmp, 0, sizeof(tmp));
+            snprintf(tmp, sizeof(tmp), "%04d-%02d-%02dT%02d:%02d:%02d", ntohs(year), month, date, hour, min, sec);
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_TIME)
+                properties.startTime = tmp;
+            else
+                properties.endTime = tmp;
+            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::TIMEOUT);
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_APPLY:
+        {
+            int16_t retValue;
+            uint8_t action;
+            if (req.unpack(action) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            } // if
+
+            if ((properties.control & static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL)) == 0) {
+                try {
+                    properties.protocol = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::Protocol::UNSPECIFIED);
+                } catch (const std::exception& e) {
+                    return ipmi::responseInvalidFieldRequest();
+                }
+            }
+
+            if (action == 0b01) {
+                auto method = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "AddRule");
+                method.append(properties.target, properties.control, properties.protocol, properties.startIPAddr, properties.endIPAddr,
+                           properties.startPort, properties.endPort, properties.macAddr, properties.startTime, properties.endTime);
+                try {
+                    auto reply = dbus->call(method);
+                    reply.read(retValue);
+                    properties = {};
+                    if (retValue==0)
+                        return ipmi::responseSuccess();
+                    else
+                        return ipmi::responseResponseError();
+                } catch (const sdbusplus::exception_t& e) {
+                    properties = {};
+                    return ipmi::responseResponseError();
+                }
+            } // if
+            else if (action == 0x00) {
+                auto method = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "DelRule");
+                method.append(properties.target, properties.control, properties.protocol, properties.startIPAddr, properties.endIPAddr,
+                           properties.startPort, properties.endPort, properties.macAddr, properties.startTime, properties.endTime);
+                try {
+                    auto reply = dbus->call(method);
+                    reply.read(retValue);
+                    properties = {};
+                    if (retValue==0)
+                        return ipmi::responseSuccess();
+                    else
+                        return ipmi::responseResponseError();
+                } catch (const sdbusplus::exception_t& e) {
+                    properties = {};
+                    return ipmi::responseResponseError();
+                }
+            } // else if
+            else {
+                properties = {};
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            return ipmi::responseSuccess();
+        }
+        case ami::general::network::SetFirewallOEMParam::PARAM_FLUSH:
+        {
+            uint8_t ipType;
+            if (req.unpack(ipType) != 0 || !req.fullyUnpacked()) {
+                return responseInvalidFieldRequest();
+            }
+            
+            auto request = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "FlushAll");
+            try {
+                request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::IP>(ipType)));
+            } catch (const std::exception& e) {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            dbus->call_noreply(request);
+            return ipmi::responseSuccess();
+        }
+        default:
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
+    }
+
+    return ipmi::responseUnspecifiedError();
+}
+
+ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t parameter, message::Payload& req) {
+    using FirewallIface = sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
+    using FirewallTuples = std::tuple<bool, std::string, uint8_t, std::string, std::string, std::string, uint16_t, uint16_t, std::string, std::string, std::string>;
+    std::vector<FirewallTuples> tupleList;
+    message::Payload payload;
+    struct firewall_t {
+        uint8_t target;
+        uint8_t control;
+        uint8_t protocol;
+        uint16_t startPort;
+        uint16_t stopPort;
+        ether_addr macAddr;
+        uint16_t startYear;
+        uint8_t startMonth;
+        uint8_t startDate;
+        uint8_t startHour;
+        uint8_t startMin;
+        uint8_t startSec;
+        uint16_t stopYear;
+        uint8_t stopMonth;
+        uint8_t stopDate;
+        uint8_t stopHour;
+        uint8_t stopMin;
+        uint8_t stopSec;
+    } ret;
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+    auto request = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj,
+                                        ami::general::network::firewallConfigurationIntf, "GetRules");
+
+    switch (static_cast<ami::general::network::GetFirewallOEMParam>(parameter))
+    {
+        case ami::general::network::GetFirewallOEMParam::PARAM_RULE_NUMBER:
+        {
+            uint8_t ipType;
+            if (req.unpack(ipType) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            }
+
+            try {
+                request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::IP>(ipType)));
+                auto resp = dbus->call(request);
+                resp.read(tupleList);
+                uint8_t num = 0;
+                for (auto it = tupleList.begin(); it != tupleList.end(); it++) {
+                    if (!(std::get<0>(*it))) {
+                        num++;
+                    } // if
+                } // for
+
+                payload.pack(num);
+            } catch (const std::exception& e1) {
+                return responseInvalidFieldRequest();
+            }
+
+            return ipmi::responseSuccess(payload);
+        }
+        case ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE:
+        case ami::general::network::GetFirewallOEMParam::PARAM_IPV6_RULE:
+        {
+            uint8_t index;
+            if (req.unpack(index) != 0 || !req.fullyUnpacked()) {
+                return responseReqDataLenInvalid();
+            }
+
+            try {
+                if (static_cast<ami::general::network::GetFirewallOEMParam>(parameter) == ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE) {
+                    request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::IP::IPV4));
+                } // if
+                else
+                   request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::IP::IPV6));
+            } catch (const std::exception& e) {
+                return responseInvalidFieldRequest();
+            }
+            auto resp = dbus->call(request);
+            resp.read(tupleList);
+            if (tupleList.size() == 0) {
+                return ipmi::responseParmOutOfRange();
+            } // if
+            else if (tupleList.size() <= index) {
+                return ipmi::responseParmOutOfRange();
+            }
+            int i = 0;
+            for (auto it = tupleList.begin(); it != tupleList.end(); it++) {
+                if (std::get<0>(*it)) {
+                    i++;
+                } // if
+            } // for
+        
+            auto [preload, target, control, protocol, startIPAddr, endIPAddr, startPort, endPort, macAddr, startTime, endTime] = tupleList.at(i+index);
+            memset(&ret, 0, sizeof(firewall_t));
+            try {
+                ret.target = static_cast<uint8_t>(FirewallIface::convertTargetFromString(target));
+                ret.protocol = static_cast<uint8_t>(FirewallIface::convertProtocolFromString(protocol));
+            } catch (const std::exception& e3) {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            ret.control = control;
+            ret.startPort = ntohs(startPort);
+            ret.stopPort = ntohs(endPort);
+            if (!macAddr.empty()) {
+                ret.macAddr = *(ether_aton(macAddr.c_str()));
+            } // if
+
+            int tmps[6];
+            if (!startTime.empty()) {
+                memset(tmps, 0, sizeof(tmps));
+                sscanf(startTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0], &tmps[1], &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
+                ret.startYear = ntohs(tmps[0]);
+                ret.startMonth = tmps[1];
+                ret.startDate = tmps[2];
+                ret.startHour = tmps[3];
+                ret.startMin = tmps[4];
+                ret.startSec = tmps[5];
+            } // if
+
+            if (!endTime.empty()) {
+                memset(tmps, 0, sizeof(tmps));
+                sscanf(endTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0], &tmps[1], &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
+                ret.stopYear = ntohs(tmps[0]);
+                ret.stopMonth = tmps[1];
+                ret.stopDate = tmps[2];
+                ret.stopHour = tmps[3];
+                ret.stopMin = tmps[4];
+                ret.stopSec = tmps[5];
+            } // if
+
+            payload.pack(ret.target, ret.control, ret.protocol, ret.startPort, ret.stopPort);
+            payload.pack(std::string_view{reinterpret_cast<const char*>(&ret.macAddr), sizeof(ether_addr)});
+            payload.pack(ret.startYear, ret.startMonth, ret.startDate, ret.startHour, ret.startMin);
+            payload.pack(ret.startSec, ret.stopYear, ret.stopMonth, ret.stopDate, ret.stopHour, ret.stopMin, ret.stopSec);
+
+            std::variant<in_addr, in6_addr> startAddr, stopAddr;
+            if (static_cast<ami::general::network::GetFirewallOEMParam>(parameter) == ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE) {
+                std::string_view sv = startIPAddr;
+                sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
+                inet_pton(AF_INET, sv.data(), &startAddr);
+                inet_pton(AF_INET, endIPAddr.c_str(), &stopAddr);
+                payload.pack(std::string_view{reinterpret_cast<const char*>(&startAddr), sizeof(in_addr)});
+                payload.pack(std::string_view{reinterpret_cast<const char*>(&stopAddr), sizeof(in_addr)});
+            } // if
+            else {
+                std::string_view sv = startIPAddr;
+                sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
+                inet_pton(AF_INET6, sv.data(), &startAddr);
+                inet_pton(AF_INET6, endIPAddr.c_str(), &stopAddr);
+                payload.pack(std::string_view{reinterpret_cast<const char*>(&startAddr), sizeof(in6_addr)});
+                payload.pack(std::string_view{reinterpret_cast<const char*>(&stopAddr), sizeof(in6_addr)});
+            } // else
+
+            return ipmi::responseSuccess(payload);
+        }
+        default:
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
+    }
+
+    return ipmi::responseUnspecifiedError();
+}
+
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -4173,6 +4587,17 @@ static void registerOEMFunctions(void)
 
     registerHandler(prioOemBase, intel::netFnApp, intel::app::cmdPFRMailboxRead,
                     Privilege::Admin, ipmiOEMReadPFRMailbox);
+
+    // <Set Firewall Configuration>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetFirewallConfiguration, Privilege::User,
+                    ipmiOEMSetFirewallConfiguration);
+
+    // // <Get Firewall Configuration>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetFirewallConfiguration, Privilege::User,
+                    ipmiOEMGetFirewallConfiguration);
+ 
 }
 
 } // namespace ipmi
