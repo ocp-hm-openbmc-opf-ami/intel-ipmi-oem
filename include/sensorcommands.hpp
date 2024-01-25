@@ -16,7 +16,6 @@
 
 #pragma once
 #include "sdrutils.hpp"
-
 #include <ipmid/api.hpp>
 
 #include <cstdint>
@@ -61,6 +60,12 @@ enum class IPMISensorReadingByte3 : uint8_t
     lowerNonRecoverable = (1 << 2),
     lowerCritical = (1 << 1),
     lowerNonCritical = (1 << 0),
+    presenceDetected = (1 << 0),
+    procPresenceDetected = (1 << 7),
+    watchdog2None = (1 << 0),
+    watchdog2HardReset = (1 << 1),
+    watchdog2PowerOff = (1 << 2),
+    watchdog2PowerCycle = (1 << 3),
 };
 
 enum class IPMISensorEventEnableByte2 : uint8_t
@@ -121,9 +126,10 @@ enum class IPMINetfnSensorCmds : ipmi_cmd_t
 namespace ipmi
 {
 extern SensorSubTree sensorTree;
-static ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
-                                      std::string& connection,
-                                      std::string& path)
+static ipmi_ret_t
+    getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
+                        std::string& connection, std::string& path,
+                        std::vector<std::string>* interfaces = nullptr)
 {
     if (!getSensorSubtree(sensorTree) && sensorTree.empty())
     {
@@ -146,6 +152,11 @@ static ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
         if (path == sensor.first)
         {
             connection = sensor.second.begin()->first;
+            if (interfaces)
+            {
+                *interfaces = sensor.second.begin()->second;
+            }
+
             break;
         }
     }

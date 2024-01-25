@@ -57,9 +57,13 @@
 
 namespace ipmi
 {
+constexpr size_t ipmbMaxDataSize = 256;
 static void registerOEMFunctions() __attribute__((constructor));
 
 static constexpr size_t maxFRUStringLength = 0x3F;
+static constexpr Cc ipmiCCCertificateNumberInvalid = 0xCB;
+static constexpr Cc ipmiCCFileSelectorOrOffsetAndLengthOutOfRange = 0xC9;
+static constexpr Cc ipmiCCNoCertGenerated = 0x83;
 
 static constexpr auto ethernetIntf =
     "xyz.openbmc_project.Network.EthernetInterface";
@@ -79,6 +83,23 @@ static constexpr const char* multiNodeObjPath =
     "/xyz/openbmc_project/MultiNode/Status";
 static constexpr const char* multiNodeIntf =
     "xyz.openbmc_project.Chassis.MultiNode";
+const static constexpr char* systemDService = "org.freedesktop.systemd1";
+const static constexpr char* systemDObjPath = "/org/freedesktop/systemd1";
+const static constexpr char* systemDMgrIntf =
+    "org.freedesktop.systemd1.Manager";
+const static constexpr char* ipmiKcsService = "phosphor-ipmi-kcs@ipmi_kcs3.service";
+constexpr auto systemDInterfaceUnit = "org.freedesktop.DBus.Properties";
+constexpr auto activeState = "active";
+constexpr auto activatingState = "activating";
+
+// Task
+static constexpr auto taskIntf = "xyz.openbmc_project.Common.Task";
+static constexpr auto systemRoot = "/xyz/openbmc_project/";
+static constexpr uint8_t INVALID_ID = 0x00;
+static constexpr auto cancelTask =
+    "xyz.openbmc_project.Common.Task.OperationStatus.Cancelled";
+static constexpr auto newTask =
+    "xyz.openbmc_project.Common.Task.OperationStatus.New";
 
 enum class NmiSource : uint8_t
 {
@@ -3902,6 +3923,329 @@ ipmi::RspType<uint8_t, uint8_t> ipmiOEMGetBufferSize()
     return ipmi::responseSuccess(kcsMaxBufferSize, ipmbMaxBufferSize);
 }
 
+bool getsmtpconfig(sdbusplus::bus::bus& bus,
+                   std::tuple<bool, std::string, uint16_t, std::string>& cfg)
+{
+    auto call =
+        bus.new_method_call(smtpclient, smtpObj, smtpIntf, "GetSmtpConfig");
+    try
+    {
+        auto data = bus.call(call);
+        data.read(cfg);
+    }
+    catch (sdbusplus::exception_t& e)
+    {
+        std::cerr << "GetSmtpConfig method call failed \n";
+        return false;
+    }
+
+    return true;
+}
+
+bool setrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string> rec)
+{
+    std::variant<std::vector<std::string>> variantVectorValue = rec;
+
+    try
+    {
+        auto method =
+            bus.new_method_call(pefBus, pefObj, dBusPropertyIntf, "Set");
+        method.append(pefConfInfoIntf, "Recipient", variantVectorValue);
+
+        auto reply = bus.call(method);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "DD05: seting reciptint method call failed\n";
+        return false;
+    }
+    return true;
+}
+
+bool getrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string>& rec)
+{
+    boost::container::flat_map<
+        std::string,std::variant<std::string, uint64_t, std::vector<std::string>>>resp;
+    try
+    {
+            auto method =bus.new_method_call(pefBus, pefObj, dBusPropertyIntf, "GetAll");
+            method.append(pefConfInfoIntf);
+            auto reply = bus.call(method);
+            reply.read(resp);
+    }
+    catch (const sdbusplus::exception_t&)
+    {
+        std::cerr << "error getting Recipent  from "<<pefBus
+                  << "\n";
+        return false;
+    }
+
+    auto getRecipient = resp.find("Recipient");
+    if (getRecipient == resp.end())
+    {
+            return false;
+    }
+    rec = std::get<std::vector<std::string>>(getRecipient->second);
+    return true;
+}
+
+bool setsmtpconfig(sdbusplus::bus::bus& bus, bool enable, std::string host,
+                   uint16_t port, std::string send)
+{
+    try
+    {
+    auto call =
+        bus.new_method_call(smtpclient, smtpObj, smtpIntf, "SetSmtpConfig");
+
+    call.append(enable, host, port, send);
+        auto data = bus.call(call);
+    }
+    catch (sdbusplus::exception_t& e)
+    {
+        std::cerr << "SetSmtpConfigmethod call failed\n";
+        return false;
+    }
+    return true;
+}
+
+bool emailIdCheck(std::string email)
+{
+    const std::regex pattern("(\\w+)(\\.|_)?(\\w*)@(\\w+)(\\.(\\w+))+");
+    return std::regex_match(email, pattern);
+}
+
+ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t parameter,
+                                     message::Payload& req)
+{
+
+    std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
+    std::vector<std::string> rec;
+    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+    if (!getsmtpconfig(*bus, smtpcfg) || !getrecaddress(*bus, rec))
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    bool mailChk = false;
+    bool enabled = std::get<0>(smtpcfg);
+    std::string host = std::get<1>(smtpcfg);
+    uint16_t port = std::get<2>(smtpcfg);
+    std::string sender = std::get<3>(smtpcfg);
+    switch (smtpSetting(parameter))
+    {
+        case smtpSetting::enable:
+        {
+            std::array<uint8_t, 1> bytes;
+            if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+            if (bytes[0] == 0x00)
+            {
+                enabled = false;
+            }
+            else if (bytes[0] == 0x01)
+            {
+                enabled = true;
+            }
+            break;
+        }
+        case smtpSetting::ipAdd:
+        {
+            std::array<uint8_t, 4> bytes;
+            if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+            host = std::to_string(bytes[0]) + "." + std::to_string(bytes[1]) +
+                   "." + std::to_string(bytes[2]) + "." +
+                   std::to_string(bytes[3]);
+            break;
+        }
+        case smtpSetting::port:
+        {
+            std::vector<uint8_t> bytes;
+            if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+            if ((bytes.size() > 2) || (bytes.size() < 2))
+            {
+                return responseReqDataLenInvalid();
+            }
+            uint16_t smtpPort, smtpPortTmp;
+            smtpPortTmp = bytes.at(0);
+            smtpPort = ((smtpPortTmp << 8) | (bytes.at(1) & 0xff));
+            port = smtpPort;
+            break;
+        }
+        case smtpSetting::senderMailId:
+        {
+            std::vector<char> reqData;
+            if (req.unpack(reqData) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+
+            if (reqData.size() > 64)
+            {
+                return responseReqDataLenInvalid();
+            }
+            std::string sen(reqData.begin(), reqData.end());
+            sender = sen;
+            mailChk = emailIdCheck(sender);
+            if (mailChk == false)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            break;
+        }
+        case smtpSetting::recMailId:
+        {
+            uint8_t index = 0;
+            std::vector<char> reqData;
+            if (req.unpack(index, reqData) != 0)
+            {
+                return responseReqDataLenInvalid();
+            }
+            if (reqData.size() > 64)
+            {
+                return responseReqDataLenInvalid();
+            }
+            std::string reci(reqData.begin(), reqData.end());
+            mailChk = emailIdCheck(reci);
+            if (mailChk == false)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            replace(rec.begin(), rec.end(), rec[index - 1], reci);
+            if (!setrecaddress(*bus, rec))
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+            return responseSuccess();
+        }
+        default:
+            return responseInvalidFieldRequest();
+    }
+    if (!setsmtpconfig(*bus, enabled, host, port, sender))
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    return responseSuccess();
+}
+
+std::vector<uint8_t> convertToBytes(std::string data)
+{
+    std::vector<uint8_t> val{};
+    uint8_t byteData = 0;
+    for (std::string::size_type i = 0; i < data.length(); i++)
+    {
+        byteData = data[i];
+        val.push_back(byteData);
+    }
+    return val;
+}
+
+ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
+                                                         uint8_t parameter,
+                                                         message::Payload& req)
+{
+    std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
+    std::vector<std::string> rec;
+    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+    if (!getsmtpconfig(*bus, smtpcfg) || !getrecaddress(*bus, rec))
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    bool enabled = std::get<0>(smtpcfg);
+    std::string host = std::get<1>(smtpcfg);
+    uint16_t port = std::get<2>(smtpcfg);
+    std::string sender = std::get<3>(smtpcfg);
+    if (parameter != static_cast<uint8_t>(smtpSetting ::recMailId))
+    {
+        std::array<uint8_t, 0> bytes;
+        if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
+       {
+            return responseReqDataLenInvalid();
+        }
+    }
+
+    std::vector<uint8_t> resData = {};
+    switch (smtpSetting(parameter))
+    {
+        case smtpSetting::enable:
+        {
+            if (enabled == true)
+            {
+                resData.push_back(0x01);
+            }
+            else if (enabled == false)
+            {
+                resData.push_back(0x00);
+            }
+            break;
+        }
+        case smtpSetting::ipAdd:
+        {
+            std::vector<std::string> result;
+            if (!host.empty())
+            {
+                boost::split(result, host, boost::is_any_of("."),
+                             boost::token_compress_on);
+                uint8_t ipByte1 =
+                    static_cast<uint8_t>(std::stoi(result[0].c_str()));
+                uint8_t ipByte2 =
+                    static_cast<uint8_t>(std::stoi(result[1].c_str()));
+                uint8_t ipByte3 =
+                    static_cast<uint8_t>(std::stoi(result[2].c_str()));
+                uint8_t ipByte4 =
+                    static_cast<uint8_t>(std::stoi(result[3].c_str()));
+                resData.push_back(ipByte1);
+                resData.push_back(ipByte2);
+                resData.push_back(ipByte3);
+                resData.push_back(ipByte4);
+            }
+            break;
+        }
+        case smtpSetting::port:
+        {
+            uint8_t portMsb = 0, portLsb = 0;
+            portMsb = ((port >> 8) & 0xff);
+            portLsb = (port & 0xff);
+            resData.push_back(portMsb);
+            resData.push_back(portLsb);
+            break;
+        }
+        case smtpSetting::senderMailId:
+        {
+            resData = convertToBytes(sender);
+            break;
+        }
+        case smtpSetting::recMailId:
+        {
+            uint8_t index = 0;
+            if (req.unpack(index) != 0)
+            {
+                return responseReqDataLenInvalid();
+            }
+            if (index != index_value && index != index_value2)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::string str = rec[index - 1];
+            if (str.empty())
+            {
+                return ipmi::responseResponseError();
+            }
+            resData = convertToBytes(str);
+            break;
+        }
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+    return ipmi::responseSuccess(resData);
+}
+
 ipmi::RspType<std::vector<uint8_t>>
     ipmiOEMReadPFRMailbox(ipmi::Context::ptr& ctx, const uint8_t readRegister,
                           const uint8_t numOfBytes, uint8_t registerIdentifier)
@@ -4409,6 +4753,398 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
     return ipmi::responseUnspecifiedError();
 }
 
+ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t req)
+{
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    std::string policy = [](uint8_t policy) {
+        switch (policy)
+        {
+            case 0:
+                return "xyz.openbmc_project.Logging.Settings.Policy.Linear";
+            case 1:
+                return "xyz.openbmc_project.Logging.Settings.Policy.Circular";
+        }
+        return "";  //For invalid request return emtpy string
+    }(req);
+    if (policy.empty())
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    try
+    {
+        auto service =
+            ipmi::getService(*busp, loggingSettingIntf, loggingSettingObjPath);
+        ipmi::setDbusProperty(*busp, service, loggingSettingObjPath,
+                              loggingSettingIntf, "SelPolicy", policy.c_str());
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to set SEL Policy",
+            phosphor::logging::entry("MSG: %s", e.description()));
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+    return ipmi::responseSuccess();
+}
+
+ipmi::RspType<uint8_t> ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx)
+{
+    uint8_t policy;
+    std::string policyStr;
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+
+    try
+    {
+        auto service =
+            ipmi::getService(*busp, loggingSettingIntf, loggingSettingObjPath);
+        Value variant =
+            ipmi::getDbusProperty(*busp, service, loggingSettingObjPath,
+                                  loggingSettingIntf, "SelPolicy");
+        policyStr = std::get<std::string>(variant);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get SEL Policy information",
+            phosphor::logging::entry("MSG: %s", e.description()));
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+
+    if (![&policy](std::string selPolicy) {
+            if (selPolicy ==
+                "xyz.openbmc_project.Logging.Settings.Policy.Linear")
+            {
+                policy = 0;
+                return true;
+            }
+            else if (selPolicy ==
+                     "xyz.openbmc_project.Logging.Settings.Policy.Circular")
+            {
+                policy = 1;
+                return true;
+            }
+            else
+                return false;
+        }(policyStr))
+    {
+        return ipmi::responseResponseError();
+    }
+    return ipmi::responseSuccess(policy);
+}
+
+uint32_t CalculateCRC32(unsigned char *Buffer, uint32_t Size)
+{
+    uint32_t i,crc32 = 0xFFFFFFFF;
+
+     /* Read the data and calculate crc32 */
+     for(i = 0; i < Size; i++)
+         crc32 = ((crc32) >> 8) ^ CrcLookUpTable[(Buffer[i])
+             ^ ((crc32) & 0x000000FF)];
+     return ~crc32;
+}
+
+ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
+    [[maybe_unused]] ipmi::Context::ptr ctx, uint8_t parameter,
+    std::optional<uint8_t> MSBFileOffset,
+    std::optional<uint8_t> FileOffset2, std::optional<uint8_t> FileOffset1,
+    std::optional<uint8_t> LSBFileOffset,
+    std::optional<uint8_t> MSBNumberOfBytesToRead,
+    std::optional<uint8_t> NumberOfBytesToRead2,
+    std::optional<uint8_t> NumberOfBytesToRead1,
+    std::optional<uint8_t> LSBNumberOfBytesToRead)
+{
+    uint32_t offset = 0, nbytes = 0, crc32=0;
+    std::vector<uint8_t> respBuf;
+ 
+	std::string ca;
+	std::vector<uint8_t> caVec;
+	std::string caSubString;
+	std::vector<uint8_t> caSubVec;
+	std::vector<std::string> paths;
+	
+	std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+	
+	if (parameter == readCRC32AndSize)
+	{
+		 if (MSBFileOffset || FileOffset2 || FileOffset1 || LSBFileOffset ||
+        	MSBNumberOfBytesToRead || NumberOfBytesToRead2 ||
+        	NumberOfBytesToRead1 || LSBNumberOfBytesToRead)
+    	{
+        	return ipmi::responseReqDataLenInvalid();
+    	}
+	}
+	
+   	else if (parameter == readCACertFile)
+   	{
+    	if (!MSBFileOffset || !FileOffset2 || !FileOffset1 || !LSBFileOffset ||
+        	!MSBNumberOfBytesToRead || !NumberOfBytesToRead2 ||
+        	!NumberOfBytesToRead1 || !LSBNumberOfBytesToRead)
+    	{
+        	return ipmi::responseReqDataLenInvalid();
+    	}
+
+    	offset = (*MSBFileOffset << 24 | *FileOffset2 << 16 | *FileOffset1 << 8 |
+              	*LSBFileOffset);
+
+    	nbytes = (*MSBNumberOfBytesToRead << 24 | *NumberOfBytesToRead2 << 16 |
+              	*NumberOfBytesToRead1 << 8 | *LSBNumberOfBytesToRead);
+
+    	if (nbytes == 0)
+    	{
+        	return ipmi::response(
+            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+    	}
+    	if (nbytes > ipmbMaxDataSize)
+    	{
+        	return ipmi::response(
+            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+    	}
+   	}
+	else 
+	{ 
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Unsupported parameter");
+        return ipmi::response(ccParameterNotSupported); 
+    }
+
+	auto method = busp->new_method_call("xyz.openbmc_project.ObjectMapper", "/xyz/openbmc_project/object_mapper",
+											  "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths");
+		method.append("/xyz/openbmc_project/certs/authority/ldap/");
+		method.append(0);
+		method.append(std::array<const char*, 1>{"xyz.openbmc_project.Certs.Certificate"});
+	try
+	{
+		sdbusplus::message_t reply = busp->call(method);
+		reply.read(paths);
+				
+		if (paths.size() < 1)
+		{
+			phosphor::logging::log<phosphor::logging::level::ERR>(
+								"Failed to cert messages");
+			return ipmi::response(
+					ipmi::ipmiCCNoCertGenerated);
+	
+		}			
+	
+	}
+	catch (const std::exception& e)
+	{
+		phosphor::logging::log<phosphor::logging::level::ERR>(
+			"Failed to get Ldap genereated certificate",
+			phosphor::logging::entry("EXCEPTION=%s", e.what()));
+		return ipmi::response(
+					ipmi::ipmiCCNoCertGenerated);
+	}
+	
+	try
+	{	   
+		Value variant =
+			ipmi::getDbusProperty(*busp, "xyz.openbmc_project.Certs.Manager.Authority.Ldap", 
+			paths[0].c_str(),
+									 "xyz.openbmc_project.Certs.Certificate", "CertificateString");
+			ca = std::get<std::string>(variant);
+			caVec.assign(ca.begin(), ca.end()); 	
+	}	
+	catch (const std::exception& e)
+	{
+		phosphor::logging::log<phosphor::logging::level::ERR>(
+			"Failed to get Ldap genereated certificate",
+			phosphor::logging::entry("EXCEPTION=%s", e.what()));
+		return ipmi::response(
+					ipmi::ipmiCCNoCertGenerated);
+	}
+
+	if ((off_t)(offset + nbytes) > ca.size())
+    {
+    	return ipmi::response(
+            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+    }
+
+	caSubString = ca.substr(offset, nbytes);
+	caSubVec.assign(caSubString.begin(), caSubString.end());
+	
+    if (parameter == readCRC32AndSize)
+    {
+		crc32=CalculateCRC32(static_cast<unsigned char*>(caVec.data()),static_cast<uint32_t>(caVec.size()));
+        
+		respBuf.push_back((crc32 & 0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file crc32
+        respBuf.push_back(((crc32 >> 8) & 0xff));// Byte 2 of the 32-bit value of the cert file crc32
+        respBuf.push_back(((crc32 >> 16) & 0xff)); // Byte 3 of the 32-bit value of the cert file crc32
+        respBuf.push_back(((crc32 >> 24) & 0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file crc32
+        //fileSize 
+        respBuf.push_back((caVec.size() & 0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file size
+        respBuf.push_back(((caVec.size() >> 8) & 0xff));// Byte 2 of the 32-bit value of the cert file size
+        respBuf.push_back(((caVec.size() >> 16) & 0xff)); // Byte 3 of the 32-bit value of the cert file size
+        respBuf.push_back(((caVec.size() >> 24) & 0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file size
+		
+        return ipmi::responseSuccess(respBuf);
+    }
+	
+    return ipmi::responseSuccess(caSubVec);
+}
+
+ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx)
+{
+    try
+    {
+        // Establish a D-Bus connection
+        auto dbus = getSdBus();
+
+        // Create method call message to get the service unit properties
+        auto method = dbus->new_method_call(systemDService, systemDObjPath,
+                                           systemDMgrIntf,
+                                           "GetUnit");
+        method.append(ipmiKcsService);
+
+        auto reply = dbus->call(method);
+
+        // Process the reply to extract the service status
+        std::variant<std::string> currentState;
+        sdbusplus::message::object_path unitTargetPath;
+
+        reply.read(unitTargetPath);
+
+        method = dbus->new_method_call(
+            systemDService,
+            static_cast<const std::string&>(unitTargetPath).c_str(),
+            systemDInterfaceUnit, "Get");
+
+        method.append("org.freedesktop.systemd1.Unit", "ActiveState");
+  try
+        {
+            auto result = dbus->call(method);
+            result.read(currentState);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            syslog(LOG_WARNING, "Error in ActiveState Get:%s\n", e.what());
+            return ipmi::responseResponseError();
+        }
+        // Check the service state
+        const auto& currentStateStr = std::get<std::string>(currentState);
+
+        uint8_t kcsstate = 0;
+
+        if (currentStateStr == activeState || currentStateStr == activatingState)
+        {
+            kcsstate = 1;
+        }
+        else
+        {
+            kcsstate = 0;
+        }
+
+        return ipmi::responseSuccess(kcsstate);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseResponseError();
+    }
+}
+
+ipmi::RspType<> ipmiOEMSetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t reqData)
+{
+
+   if (reqData == KCS_ENABLE || reqData == KCS_DISABLE)
+    {
+            try
+            {
+
+                auto dbus = getSdBus();
+                auto method = dbus->new_method_call(systemDService, systemDObjPath,
+                                            systemDMgrIntf,
+                                            reqData ? "StartUnit" : "StopUnit");
+                method.append(ipmiKcsService, "replace");
+                auto reply = dbus->call(method);
+                return ipmi::responseSuccess();
+            }
+            catch (const sdbusplus::exception_t& e)
+            {
+
+                return ipmi::responseResponseError();
+            }
+    }
+
+    else{
+
+            return ipmi::responseResponseError();
+    }
+
+}
+
+ipmi::RspType<> ipmiOEMCancelTask([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t req)
+{
+    if (req == INVALID_ID)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    ipmi::ObjectTree objectTree;
+
+    boost::system::error_code ec =
+        ipmi::getAllDbusObjects(ctx, systemRoot, taskIntf, objectTree);
+
+    if (ec)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to fetch Task object from dbus",
+            phosphor::logging::entry("INTERFACE=%s", taskIntf),
+            phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
+        return ipmi::responseUnspecifiedError();
+    }
+
+    for (auto& softObject : objectTree)
+    {
+        const std::string& objPath = softObject.first;
+        const std::string& serviceName = softObject.second.begin()->first;
+        ipmi::PropertyMap result;
+
+        ec = ipmi::getAllDbusProperties(ctx, serviceName, objPath, taskIntf,
+                                        result);
+        if (ec)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to fetch Task properties",
+                phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
+            return ipmi::responseUnspecifiedError();
+        }
+
+        const uint16_t* id = nullptr;
+        std::string status;
+
+        for (const auto& [propName, propVariant] : result)
+        {
+            if (propName == "TaskId")
+            {
+                id = std::get_if<uint16_t>(&propVariant);
+            }
+            else if (propName == "Status")
+            {
+                status = std::get<std::string>(propVariant);
+            }
+        }
+
+        if (*id == req && (status.compare(newTask) == 0))
+        {
+            try
+            {
+                ipmi::setDbusProperty(ctx, serviceName, objPath, taskIntf,
+                                      "Status", cancelTask);
+                return ipmi::response(ipmi::ccSuccess);
+            }
+            catch (const sdbusplus::exception_t& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "ipmiOEMCancelTask: can't set Task Status!",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseResponseError();
+            }
+        }
+    }
+
+    // couldn't find requested ID
+    return ipmi::responseInvalidFieldRequest();
+}
 
 static void registerOEMFunctions(void)
 {
@@ -4470,6 +5206,10 @@ static void registerOEMFunctions(void)
     registerHandler(prioOpenBmcBase, intel::netFnGeneral,
                     intel::general::cmdSetSpecialUserPassword,
                     Privilege::Callback, ipmiOEMSetSpecialUserPassword);
+
+    registerHandler(prioOpenBmcBase, intel::netFnPlatform,
+                    intel::general::cmdReadCertficate, Privilege::Callback,
+                    ipmiOEMReadCertficate);
 
     // <Get Processor Error Config>
     registerHandler(prioOemBase, intel::netFnGeneral,
@@ -4598,6 +5338,42 @@ static void registerOEMFunctions(void)
                     ami::general::cmdOEMGetFirewallConfiguration, Privilege::User,
                     ipmiOEMGetFirewallConfiguration);
  
+    // <Set SMTP Config>
+    registerHandler(prioOemBase, intel::netFnGeneral,
+                    intel::general::cmdOEMSetSmtpConfig, Privilege::User,
+                    ipmiOEMSetSmtpConfig);
+
+    // <Get SMTP Config>
+    registerHandler(prioOemBase, intel::netFnGeneral,
+                    intel::general::cmdOEMGetSmtpConfig, Privilege::User,
+                    ipmiOEMGetSmtpConfig);
+
+    // <Set SEL Policy>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetSELPolicy, Privilege::User,
+                    ipmiOEMSetSELPolicy);
+
+    // <Get SEL Policy>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetSELPolicy, Privilege::User,
+                    ipmiOEMGetSELPolicy);
+
+
+    //<Get KCS Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetKCSStatus, Privilege::User,
+                    ipmiOEMGetKCSStatus);
+
+    //<Set KCS Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetKCSStatus, Privilege::User,
+                    ipmiOEMSetKCSStatus);
+
+    // <Cancel Task>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMCancelTask, Privilege::User,
+                    ipmiOEMCancelTask);
+
 }
 
 } // namespace ipmi

@@ -23,6 +23,40 @@
 #include <sstream>
 #include <string_view>
 
+std::map<uint8_t, std::map<std::string, std::map<uint8_t, std::string>>>
+    sensorSpecificEventMap = {
+        {0x12,
+         {{"System Event Sensor",
+           {{0x00, "System Reconfigured"},
+            {0x01, "OEM System boot event"},
+            {0x02, "Undetermined system hardware failure"},
+            {0x03, "Entry added to auxiliary log"},
+            {0x04, "PEF Action"},
+            {0x05, "Timestamp Clock Sync"}}}}},
+        {0x1f,
+         {{"OS Boot Status",
+           {
+               {0x00, "A: boot completed"},
+               {0x01, "C: boot completed"},
+               {0x02, "PXE boot completed"},
+               {0x03, "Diagnostic boot completed"},
+               {0x04, "CD-ROM boot completed"},
+               {0x05, "ROM boot completed"},
+               {0x06, "boot completed - device not specified"},
+               {0x07, "Installation started"},
+               {0x08, "Installation completed"},
+               {0x09, "Installation aborted"},
+               {0x0a, "Installation failed"},
+           }}}},
+        {0x20,
+         {{"OS Stop/Shutdown",
+           {{0x00, "Error during system startup"},
+            {0x01, "Run-Time Critical Stop"},
+            {0x02, "OS Graceful Stop"},
+            {0x03, "OS Graceful Shutdown"},
+            {0x04, "PEF initiated soft shutdown"},
+            {0x05, "Agent not responding"}}}}}};
+
 namespace intel_oem::ipmi::sel
 {
 
@@ -898,6 +932,7 @@ bool checkRedfishHooks(uint16_t recordID, uint8_t recordType,
     // Extract the SEL data for the hook
     redfish_hooks::SELData selData = {.generatorID = generatorID,
                                       .sensorNum = sensorNum,
+                                      .sensorType = 0xFF,
                                       .eventType = eventType,
                                       .offset = eventData1 & 0x0F,
                                       .eventData2 = eventData2,
@@ -926,6 +961,7 @@ bool checkRedfishHooks(uint16_t generatorID, uint8_t evmRev, uint8_t sensorType,
     // Extract the SEL data for the hook
     redfish_hooks::SELData selData = {.generatorID = generatorID,
                                       .sensorNum = sensorNum,
+				      .sensorType = 0xFF,
                                       .eventType = eventType,
                                       .offset = eventData1 & 0x0F,
                                       .eventData2 = eventData2,
@@ -934,4 +970,38 @@ bool checkRedfishHooks(uint16_t generatorID, uint8_t evmRev, uint8_t sensorType,
     return redfish_hooks::startRedfishHook(selData, ipmiRaw);
 }
 
+std::string checkRedfishMessage(uint16_t generatorID, uint8_t sensorType,
+                                uint8_t sensorNum, uint8_t eventType,
+                                uint8_t eventData1)
+{
+    std::string ipmiRaw;
+    std::array selBytes = {static_cast<uint8_t>(generatorID),
+                           static_cast<uint8_t>(generatorID >> 8),
+                           sensorType,
+                           sensorNum,
+                           eventType,
+                           eventData1};
+
+    redfish_hooks::toHexStr(boost::beast::span<uint8_t>(selBytes), ipmiRaw);
+    for (const auto& sensorTypeMap : sensorSpecificEventMap)
+    {
+        std::string message;
+        if (sensorTypeMap.first == sensorType)
+        {
+            for (const auto& strMap : sensorTypeMap.second)
+            {
+                message = strMap.first + "" + " Logged a ";
+                for (const auto& eventMap : strMap.second)
+                {
+                    if (eventMap.first == (eventData1 & 0x0F))
+                    {
+                        message += eventMap.second;
+                        return message;
+                    }
+                }
+            }
+        }
+    }
+    return ("SEL Entry Added:" + ipmiRaw);
+}
 } // namespace intel_oem::ipmi::sel

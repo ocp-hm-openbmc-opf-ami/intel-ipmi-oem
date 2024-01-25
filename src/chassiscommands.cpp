@@ -185,13 +185,17 @@ ipmi::RspType<> ipmiChassisIdentify(std::optional<uint8_t> interval,
                                     std::optional<uint8_t> force)
 {
     uint8_t identifyInterval = interval.value_or(defaultIdentifyTimeOut);
-    bool forceIdentify = force.value_or(0) & 0x01;
+    uint8_t forceIdentify = force.value_or(0);
 
     enclosureIdentifyLed(ledIDOnObj, false);
     identifyTimer->stop();
 
     if (identifyInterval || forceIdentify)
     {
+        if ((forceIdentify >> 1) != 0)
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
         enclosureIdentifyLed(ledIDBlinkObj, true);
         if (forceIdentify)
         {

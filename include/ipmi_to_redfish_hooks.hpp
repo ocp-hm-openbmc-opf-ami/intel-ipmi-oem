@@ -29,12 +29,17 @@ bool checkRedfishHooks(uint16_t recordID, uint8_t recordType,
 bool checkRedfishHooks(uint16_t generatorID, uint8_t evmRev, uint8_t sensorType,
                        uint8_t sensorNum, uint8_t eventType, uint8_t eventData1,
                        uint8_t eventData2, uint8_t eventData3);
+std::string checkRedfishMessage(uint16_t generatorID, uint8_t sensorType,
+                                uint8_t sensorNum, uint8_t eventType,
+                                uint8_t eventData1);
+
 namespace redfish_hooks
 {
 struct SELData
 {
     int generatorID;
     int sensorNum;
+    int sensorType;
     int eventType;
     int offset;
     int eventData2;
@@ -75,6 +80,13 @@ enum class BIOSEventTypes
     oemDiscrete7 = 0x77,
     reservedA0 = 0xa0,
     reservedF0 = 0xf0,
+};
+
+enum class IPMISensorTypes
+{
+    systemEvent = 0x12,
+    osBootEvent = 0x1f,
+    osCriticalStop = 0x20,
 };
 
 static inline bool defaultMessageHook(const std::string& ipmiRaw)

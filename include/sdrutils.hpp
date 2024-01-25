@@ -56,6 +56,13 @@ static constexpr uint16_t lun3Sensor0 = 0x300;
 static constexpr uint16_t invalidSensorNumber = 0xFFFF;
 static constexpr uint8_t reservedSensorNumber = 0xFF;
 
+static constexpr uint8_t sysEntityInstance = 0x01;
+static constexpr uint8_t eidReserved = 0x00;
+static constexpr uint8_t processorSensorType = 0x07;
+static constexpr uint8_t sensorSpecificEvent = 0x6f;
+static constexpr uint8_t watchdog2SensorType = 0x23;
+static constexpr uint8_t osCriticalStop = 0x20;
+
 namespace details
 {
 
@@ -254,8 +261,8 @@ inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
                                            "xyz.openbmc_project.ObjectMapper",
                                            "GetSubTree");
     static constexpr const auto depth = 2;
-    static constexpr std::array<const char*, 3> interfaces = {
-        "xyz.openbmc_project.Sensor.Value",
+    static constexpr std::array<const char*, 4> interfaces = {
+        "xyz.openbmc_project.Sensor.Value", "xyz.openbmc_project.Sensor.State",
         "xyz.openbmc_project.Sensor.Threshold.Warning",
         "xyz.openbmc_project.Sensor.Threshold.Critical"};
     mapperCall.append("/xyz/openbmc_project/sensors", depth, interfaces);
@@ -355,16 +362,63 @@ enum class SensorTypeCodes : uint8_t
     voltage = 0x2,
     current = 0x3,
     fan = 0x4,
+    processor = 0x07,
+    powersupply = 0x08,
+    powerunit = 0x09,
+    os = 0x20,
+    acpisystem = 0x22,
+    watchdog2 = 0x23,
+    battery = 0x29,
     other = 0xB,
 };
 
-const static boost::container::flat_map<const char*, SensorTypeCodes, CmpStr>
-    sensorTypes{{{"temperature", SensorTypeCodes::temperature},
-                 {"voltage", SensorTypeCodes::voltage},
-                 {"current", SensorTypeCodes::current},
-                 {"fan_tach", SensorTypeCodes::fan},
-                 {"fan_pwm", SensorTypeCodes::fan},
-                 {"power", SensorTypeCodes::other}}};
+enum class SensorEventTypeCodes : uint8_t
+{
+    unspecified = 0x00,
+    threshold = 0x01,
+    digitalState = 0x03,
+    digitalFailure = 0x04,
+    digitalLimit = 0x05,
+    digitalPerformance = 0x06,
+    digitalPresence = 0x08,
+    digitalEnabled = 0x09,
+    acpiDevice = 0x0c,
+    sensorSpecified = 0x6f
+};
+
+const static boost::container::flat_map<
+    const char*, std::pair<SensorTypeCodes, SensorEventTypeCodes>, CmpStr>
+    sensorTypes{
+        {{"temperature", std::make_pair(SensorTypeCodes::temperature,
+                                        SensorEventTypeCodes::threshold)},
+         {"voltage", std::make_pair(SensorTypeCodes::voltage,
+                                    SensorEventTypeCodes::threshold)},
+         {"current", std::make_pair(SensorTypeCodes::current,
+                                    SensorEventTypeCodes::threshold)},
+         {"fan_tach", std::make_pair(SensorTypeCodes::fan,
+                                     SensorEventTypeCodes::threshold)},
+         {"fan_pwm", std::make_pair(SensorTypeCodes::fan,
+                                    SensorEventTypeCodes::threshold)},
+         {"cpu", std::make_pair(SensorTypeCodes::processor,
+                                SensorEventTypeCodes::sensorSpecified)},
+         {"powersupply", std::make_pair(SensorTypeCodes::powersupply,
+                                        SensorEventTypeCodes::sensorSpecified)},
+         {"powerunit", std::make_pair(SensorTypeCodes::powerunit,
+                                      SensorEventTypeCodes::sensorSpecified)},
+         {"os", std::make_pair(SensorTypeCodes::os,
+                               SensorEventTypeCodes::sensorSpecified)},
+         {"acpisystem", std::make_pair(SensorTypeCodes::acpisystem,
+                                       SensorEventTypeCodes::sensorSpecified)},
+         {"watchdog", std::make_pair(SensorTypeCodes::watchdog2,
+                                     SensorEventTypeCodes::sensorSpecified)},
+         {"battery", std::make_pair(SensorTypeCodes::battery,
+                                    SensorEventTypeCodes::sensorSpecified)},
+         {"power", std::make_pair(SensorTypeCodes::other,
+                                  SensorEventTypeCodes::threshold)},
+         {"chassisstate", std::make_pair(SensorTypeCodes::powerunit,
+                                         SensorEventTypeCodes::digitalState)},
+         {"acpidevice", std::make_pair(SensorTypeCodes::powersupply,
+                                       SensorEventTypeCodes::acpiDevice)}}};
 
 inline static std::string getSensorTypeStringFromPath(const std::string& path)
 {
@@ -392,7 +446,8 @@ inline static uint8_t getSensorTypeFromPath(const std::string& path)
     auto findSensor = sensorTypes.find(type.c_str());
     if (findSensor != sensorTypes.end())
     {
-        sensorType = static_cast<uint8_t>(findSensor->second);
+       sensorType =
+            static_cast<uint8_t>(std::get<SensorTypeCodes>(findSensor->second));
     } // else default 0x0 RESERVED
 
     return sensorType;
@@ -418,13 +473,21 @@ inline static uint16_t getSensorNumberFromPath(const std::string& path)
     }
 }
 
-inline static uint8_t getSensorEventTypeFromPath(const std::string& /* path */)
+inline static uint8_t getSensorEventTypeFromPath(const std::string& path)
 {
-    // TODO: Add support for additional reading types as needed
-    return 0x1; // reading type = threshold
+    uint8_t sensorEventType = 0;
+    std::string type = getSensorTypeStringFromPath(path);
+    auto findSensor = sensorTypes.find(type.c_str());
+    if (findSensor != sensorTypes.end())
+    {
+        sensorEventType = static_cast<uint8_t>(
+            std::get<SensorEventTypeCodes>(findSensor->second));
+    }
+    return sensorEventType;
 }
 
-inline static std::string getPathFromSensorNumber(uint16_t sensorNum)
+inline static std::string getPathFromSensorNumber(uint16_t sensorNum,
+                                                  uint8_t senType = 0xff)
 {
     std::shared_ptr<SensorNumMap> sensorNumMapPtr;
     details::getSensorNumMap(sensorNumMapPtr);
@@ -435,12 +498,40 @@ inline static std::string getPathFromSensorNumber(uint16_t sensorNum)
 
     try
     {
+        if (senType == osCriticalStop) // check for os critical stop sensor type
+        {
+            for (auto it = sensorNumMapPtr->begin();
+                 it != sensorNumMapPtr->end(); ++it)
+            {
+                size_t found = it->right.find("/os/");
+                if (found != std::string::npos)
+                {
+                    return it->right;
+                }
+            }
+        }
+
         return sensorNumMapPtr->left.at(sensorNum);
     }
     catch (const std::out_of_range& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
         return std::string();
+    }
+}
+
+[[maybe_unused]] static uint8_t getEventType(const uint8_t sensorType)
+{
+    switch (sensorType)
+    {
+        case static_cast<uint8_t>(0x00):
+        case static_cast<uint8_t>(0x01):
+        case static_cast<uint8_t>(0x02):
+        case static_cast<uint8_t>(0x03):
+        case static_cast<uint8_t>(0x04):
+            return 0x01;
+        default:
+            return 0x6f;
     }
 }
 

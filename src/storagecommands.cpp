@@ -21,14 +21,20 @@
 #include "ipmi_to_redfish_hooks.hpp"
 #include "sdrutils.hpp"
 #include "types.hpp"
+#include "xyz/openbmc_project/Logging/Entry/server.hpp"
 
 #include <boost/algorithm/string.hpp>
 #include <boost/container/flat_map.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/message.hpp>
+#include <ipmid/utils.hpp>
+#include <phosphor-ipmi-host/selutility.hpp>
+#include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/message/types.hpp>
 #include <sdbusplus/timer.hpp>
+#include <xyz/openbmc_project/Common/error.hpp>
+#include <xyz/openbmc_project/Logging/SEL/error.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -37,6 +43,455 @@
 #include <unordered_set>
 
 static constexpr bool DEBUG = false;
+
+using namespace phosphor::logging;
+using namespace ami::ipmi::sel;
+using ErrLevel = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+auto sevLevel = ErrLevel::Informational;
+using InternalFailure =
+    sdbusplus::xyz::openbmc_project::Common::Error::InternalFailure;
+
+using SELRecordID = uint16_t;
+using SELEntry = ipmi::sel::SELEventRecordFormat;
+using SELCacheMap = std::map<SELRecordID, SELEntry>;
+using additionalDataMap = std::map<std::string, std::string>;
+using entryDataMap = std::map<ipmi::sel::PropertyName, ipmi::sel::PropertyType>;
+
+SELCacheMap selCacheMap __attribute__((init_priority(101)));
+bool selCacheMapInitialized;
+std::unique_ptr<sdbusplus::bus::match_t> selAddedMatch
+    __attribute__((init_priority(101)));
+std::unique_ptr<sdbusplus::bus::match_t> selRemovedMatch
+    __attribute__((init_priority(101)));
+std::unique_ptr<sdbusplus::bus::match_t> selUpdatedMatch
+    __attribute__((init_priority(101)));
+
+template <typename TP>
+std::time_t to_time_t(TP tp)
+{
+    using namespace std::chrono;
+    auto sctp = time_point_cast<system_clock::duration>(tp - TP::clock::now() +
+                                                        system_clock::now());
+    return system_clock::to_time_t(sctp);
+}
+
+static int getFileTimestamp(const std::filesystem::path& file)
+{
+    std::error_code ec;
+    std::filesystem::file_time_type ftime =
+        std::filesystem::last_write_time(file, ec);
+    if (ec)
+    {
+        return ::ipmi::sel::invalidTimeStamp;
+    }
+
+    return to_time_t(ftime);
+}
+
+inline uint16_t getLoggingId(const std::string& p)
+{
+    namespace fs = std::filesystem;
+    fs::path entryPath(p);
+    return std::stoul(entryPath.filename().string());
+}
+
+std::string getLoggingObjPath(uint16_t id)
+{
+    return std::string(ipmi::sel::logBasePath) + "/" + std::to_string(id);
+}
+
+std::chrono::seconds getEntryTimeStamp(const std::string& objPath)
+{
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+
+    auto service = ipmi::getService(bus, logEntryIntf, objPath);
+
+    using namespace std::string_literals;
+    static const auto propTimeStamp = "Timestamp"s;
+
+    auto methodCall = bus.new_method_call(service.c_str(), objPath.c_str(),
+                                          ipmi::sel::propIntf, "Get");
+    methodCall.append(logEntryIntf);
+    methodCall.append(propTimeStamp);
+
+    auto reply = bus.call(methodCall);
+    if (reply.is_method_error())
+    {
+        log<level::ERR>("Error in reading Timestamp from Entry interface");
+        elog<InternalFailure>();
+    }
+
+    std::variant<uint64_t> timeStamp;
+    reply.read(timeStamp);
+
+    std::chrono::milliseconds chronoTimeStamp(std::get<uint64_t>(timeStamp));
+
+    return std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp);
+}
+
+void readLoggingObjectPathst(ipmi::sel::ObjectPaths& paths)
+{
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    auto depth = 0;
+    paths.clear();
+
+    auto mapperCall =
+        bus.new_method_call(ipmi::sel::mapperBusName, ipmi::sel::mapperObjPath,
+                            ipmi::sel::mapperIntf, "GetSubTreePaths");
+    mapperCall.append(ipmi::sel::logBasePath);
+    mapperCall.append(depth);
+    mapperCall.append(ipmi::sel::ObjectPaths({ipmi::sel::logEntryIntf}));
+
+    try
+    {
+        auto reply = bus.call(mapperCall);
+        reply.read(paths);
+    }
+    catch (const sdbusplus::exception::exception& e)
+    {
+        if (strcmp(e.name(),
+                   "xyz.openbmc_project.Common.Error.ResourceNotFound"))
+        {
+            throw;
+        }
+    }
+    std::sort(paths.begin(), paths.end(),
+              [](const std::string& a, const std::string& b) {
+                  namespace fs = std::filesystem;
+                  fs::path pathA(a);
+                  fs::path pathB(b);
+                  auto idA = std::stoul(pathA.filename().string());
+                  auto idB = std::stoul(pathB.filename().string());
+
+                  return idA < idB;
+              });
+}
+
+std::pair<std::string, std::string> parseEntry(const std::string& entry)
+{
+    constexpr auto equalSign = "=";
+    auto pos = entry.find(equalSign);
+    assert(pos != std::string::npos);
+    auto key = entry.substr(0, pos);
+    auto val = entry.substr(pos + 1);
+    return {key, val};
+}
+// Parse SEL data and stored in additionalDataMap
+additionalDataMap parseAdditionalData(const ipmi::sel::AdditionalData& data)
+{
+    std::map<std::string, std::string> ret;
+
+    for (const auto& d : data)
+    {
+        ret.insert(parseEntry(d));
+    }
+    return ret;
+}
+uint8_t convert(const std::string_view& str, int base = 10)
+{
+    int ret;
+    std::from_chars(str.data(), str.data() + str.size(), ret, base);
+    return static_cast<uint8_t>(ret);
+}
+
+// Convert the string to a vector of uint8_t, where the str is formatted as hex
+std::vector<uint8_t> convertVec(const std::string_view& str)
+{
+    std::vector<uint8_t> ret;
+    auto len = str.size() / 2;
+    ret.reserve(len);
+    for (size_t i = 0; i < len; ++i)
+    {
+        ret.emplace_back(convert(str.substr(i * 2, 2), 16));
+    }
+    return ret;
+}
+
+std::chrono::milliseconds getEntryData(const std::string& objPath,
+                                       entryDataMap& entryData,
+                                       uint16_t& recordId)
+{
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    auto service = ipmi::getService(bus, ipmi::sel::logEntryIntf, objPath);
+
+    // Read all the log entry properties.
+    auto methodCall = bus.new_method_call(service.c_str(), objPath.c_str(),
+                                          ipmi::sel::propIntf, "GetAll");
+    methodCall.append(ipmi::sel::logEntryIntf);
+
+    auto reply = bus.call(methodCall);
+    if (reply.is_method_error())
+    {
+        log<level::ERR>("Error in reading logging property entries");
+        elog<InternalFailure>();
+    }
+
+    reply.read(entryData);
+    // Read Id from the log entry.
+    static constexpr auto propId = "Id";
+    auto iterId = entryData.find(propId);
+    if (iterId == entryData.end())
+    {
+        log<level::ERR>("Error in reading Id of logging entry");
+        elog<InternalFailure>();
+    }
+    recordId = static_cast<uint16_t>(std::get<uint32_t>(iterId->second));
+
+    // Read Timestamp from the log entry.
+    static constexpr auto propTimeStamp = "Timestamp";
+    auto iterTimeStamp = entryData.find(propTimeStamp);
+    if (iterTimeStamp == entryData.end())
+    {
+        log<level::ERR>("Error in reading Timestamp of logging entry");
+        elog<InternalFailure>();
+    }
+    std::chrono::milliseconds chronoTimeStamp(
+        std::get<uint64_t>(iterTimeStamp->second));
+    return chronoTimeStamp;
+}
+
+ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
+{
+    ipmi::sel::GetSELEntryResponse record{};
+
+    uint16_t recordId;
+    entryDataMap entryData;
+    std::chrono::milliseconds chronoTimeStamp =
+        getEntryData(objPath, entryData, recordId);
+
+    record.event.eventRecord.recordID = recordId;
+    additionalDataMap m;
+    auto iterData = entryData.find(propAdditionalData);
+    if (iterData == entryData.end())
+    {
+        log<level::ERR>("SEL AdditionalData  Not available");
+        return record;
+    }
+
+    const auto& addData = std::get<ipmi::sel::AdditionalData>(iterData->second);
+    m = parseAdditionalData(addData);
+    auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
+    if (recordType != systemEventRecord)
+    {
+        log<level::ERR>("Invalid recordType");
+        return record;
+    }
+    // Default values when there is no matched sensor
+    record.event.eventRecord.sensorType = 0;
+    record.event.eventRecord.sensorNum = 0xFF;
+    record.event.eventRecord.eventType = 0;
+    std::string sensorPath("");
+    auto iter = m.find(strSensorPath);
+    if (iter != m.end())
+    {
+        sensorPath = iter->second;
+    }
+    else
+    {
+        log<level::ERR>("Event not from matched sensor, Hence logging it with "
+                        "default values");
+    }
+
+    if (!sensorPath.empty())
+    {
+        try
+        {
+            record.event.eventRecord.sensorNum =
+                getSensorNumberFromPath(sensorPath);
+            record.event.eventRecord.eventType =
+                getSensorEventTypeFromPath(sensorPath);
+            record.event.eventRecord.sensorType =
+                getSensorTypeFromPath(sensorPath);
+        }
+        catch (...)
+        {
+            log<level::ERR>("Failed to get dynamic sensor properties");
+            elog<InternalFailure>();
+        }
+    }
+    record.event.eventRecord.eventMsgRevision = eventMsgRevision;
+    record.event.eventRecord.generatorID = 0;
+
+    iter = m.find(ami::ipmi::sel::strGenerateId);
+    if (iter != m.end())
+    {
+        record.event.eventRecord.generatorID =
+            static_cast<uint16_t>(convert(iter->second));
+    }
+
+    iter = m.find(ami::ipmi::sel::strEventDir);
+    if (iter != m.end())
+    {
+        auto eventDir = static_cast<uint8_t>(convert(iter->second));
+        uint8_t assert = eventDir ? assertEvent : deassertEvent;
+        record.event.eventRecord.eventType |= assert;
+    }
+
+    record.event.eventRecord.recordType = recordType;
+    record.event.eventRecord.timeStamp = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
+            .count());
+
+    auto sensorData = std::vector<unsigned char>(0);
+    iter = m.find(ami::ipmi::sel::strSensorData);
+    if (iter != m.end())
+        sensorData = convertVec(iter->second);
+
+    iter = m.find("SENSOR_TYPE");
+    if (iter != m.end())
+    {
+        record.event.eventRecord.sensorType =
+            static_cast<uint8_t>(std::stoi(iter->second));
+        record.event.eventRecord.eventType =
+            getEventType(record.event.eventRecord.sensorType);
+    }
+    iter = m.find(strSensorData);
+    if (iter != m.end())
+        sensorData = convertVec(iter->second);
+    record.event.eventRecord.eventData1 = static_cast<uint8_t>(0x50);
+
+    // The remaining 3 bytes are the sensor data
+    memcpy(&record.event.eventRecord.eventData1, sensorData.data(),
+           std::min(sensorData.size(),
+                    static_cast<size_t>(ami::ipmi::sel::selDataSize)));
+
+    return record;
+}
+
+std::optional<std::pair<uint16_t, SELEntry>>
+    parseLoggingEntry(const std::string& p)
+{
+    try
+    {
+        auto id = getLoggingId(p);
+        ipmi::sel::GetSELEntryResponse record{};
+        record = createSELEntry(p);
+        return std::pair<uint16_t, SELEntry>({id, std::move(record.event)});
+    }
+    catch (const std::exception& e)
+    {
+        fprintf(stderr, "Failed to convert %s to SEL: %s\n", p.c_str(),
+                e.what());
+    }
+    return std::nullopt;
+}
+
+void saveEraseTimeStamp()
+{
+    std::filesystem::path path(ami::ipmi::sel::selEraseTimestamp);
+    std::ofstream eraseTimeFile(path);
+    if (!eraseTimeFile.good())
+    {
+        std::cerr << "Failed to open sel_erase_time file";
+    }
+
+    eraseTimeFile.close();
+}
+
+void selAddedCallback(sdbusplus::message::message& m)
+{
+    sdbusplus::message::object_path objPath;
+    try
+    {
+        m.read(objPath);
+    }
+    catch (const sdbusplus::exception::exception& e)
+    {
+        log<level::ERR>("Failed to read object path");
+        return;
+    }
+    std::string p = objPath;
+    auto entry = parseLoggingEntry(p);
+    if (entry)
+    {
+        selCacheMap.insert(std::move(*entry));
+    }
+}
+
+void selRemovedCallback(sdbusplus::message::message& m)
+{
+    sdbusplus::message::object_path objPath;
+    try
+    {
+        m.read(objPath);
+    }
+    catch (const sdbusplus::exception::exception& e)
+    {
+        log<level::ERR>("Failed to read object path");
+    }
+    try
+    {
+        std::string p = objPath;
+        selCacheMap.erase(getLoggingId(p));
+        saveEraseTimeStamp();
+    }
+    catch (const std::invalid_argument& e)
+    {
+        log<level::ERR>("Invalid logging entry ID");
+    }
+}
+
+void selUpdatedCallback(sdbusplus::message::message& m)
+{
+    std::string p = m.get_path();
+    auto entry = parseLoggingEntry(p);
+    if (entry)
+    {
+        selCacheMap.insert_or_assign(entry->first, std::move(entry->second));
+    }
+}
+
+void registerSelCallbackHandler()
+{
+    using namespace sdbusplus::bus::match::rules;
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    if (!selAddedMatch)
+    {
+        selAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            bus, interfacesAdded("/xyz/openbmc_project/logging"),
+            std::bind(selAddedCallback, std::placeholders::_1));
+    }
+    if (!selRemovedMatch)
+    {
+        selRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            bus, interfacesRemoved("/xyz/openbmc_project/logging"),
+            std::bind(selRemovedCallback, std::placeholders::_1));
+    }
+    if (!selUpdatedMatch)
+    {
+        selUpdatedMatch = std::make_unique<sdbusplus::bus::match::match>(
+            bus,
+            type::signal() + member("PropertiesChanged"s) +
+                interface("org.freedesktop.DBus.Properties"s) +
+                argN(0, "xyz.openbmc_project.Logging.Entry"),
+            std::bind(selUpdatedCallback, std::placeholders::_1));
+    }
+}
+
+void initSELCache()
+{
+    registerSelCallbackHandler();
+    ipmi::sel::ObjectPaths paths;
+    try
+    {
+        readLoggingObjectPathst(paths);
+    }
+    catch (const sdbusplus::exception::exception& e)
+    {
+        log<level::ERR>("Failed to get logging object paths");
+        return;
+    }
+    for (const auto& p : paths)
+    {
+        auto entry = parseLoggingEntry(p);
+        if (entry)
+        {
+            selCacheMap.insert(std::move(*entry));
+        }
+    }
+    selCacheMapInitialized = true;
+}
+
 
 namespace intel_oem::ipmi::sel
 {
@@ -784,7 +1239,7 @@ static bool getSELLogFiles(std::vector<std::filesystem::path>& selLogFiles)
     return !selLogFiles.empty();
 }
 
-static int countSELEntries()
+[[maybe_unused]] static int countSELEntries()
 {
     // Get the list of ipmi_sel log files
     std::vector<std::filesystem::path> selLogFiles;
@@ -840,7 +1295,7 @@ static bool findSELEntry(const int recordID,
     return false;
 }
 
-static uint16_t
+[[maybe_unused]] static uint16_t
     getNextRecordID(const uint16_t recordID,
                     const std::vector<std::filesystem::path>& selLogFiles)
 {
@@ -856,7 +1311,7 @@ static uint16_t
     }
 }
 
-static int fromHexStr(const std::string& hexStr, std::vector<uint8_t>& data)
+[[maybe_unused]] static int fromHexStr(const std::string& hexStr, std::vector<uint8_t>& data)
 {
     for (unsigned int i = 0; i < hexStr.size(); i += 2)
     {
@@ -879,26 +1334,58 @@ static int fromHexStr(const std::string& hexStr, std::vector<uint8_t>& data)
     return 0;
 }
 
-ipmi::RspType<uint8_t,  // SEL version
-              uint16_t, // SEL entry count
-              uint16_t, // free space
-              uint32_t, // last add timestamp
-              uint32_t, // last erase timestamp
-              uint8_t>  // operation support
+ipmi::RspType<uint8_t,  // SEL revision.
+              uint16_t, // number of log entries in SEL.
+              uint16_t, // free Space in bytes.
+              uint32_t, // most recent addition timestamp
+              uint32_t, // most recent erase timestamp.
+              bool,     // SEL allocation info supported
+              bool,     // reserve SEL supported
+              bool,     // partial Add SEL Entry supported
+              bool,     // delete SEL supported
+              uint3_t,  // reserved
+              bool      // overflow flag
+              >
     ipmiStorageGetSELInfo()
 {
-    constexpr uint8_t selVersion = ipmi::sel::selVersion;
-    uint16_t entries = countSELEntries();
-    uint32_t addTimeStamp = intel_oem::ipmi::sel::getFileTimestamp(
-        intel_oem::ipmi::sel::selLogDir / intel_oem::ipmi::sel::selLogFilename);
-    uint32_t eraseTimeStamp = intel_oem::ipmi::sel::erase_time::get();
-    constexpr uint8_t operationSupport =
-        intel_oem::ipmi::sel::selOperationSupport;
-    constexpr uint16_t freeSpace =
-        0xffff; // Spec indicates that more than 64kB is free
+    uint16_t entries = 0;
+    // Most recent addition timestamp.
+    uint32_t addTimeStamp = ipmi::sel::invalidTimeStamp;
 
-    return ipmi::responseSuccess(selVersion, entries, freeSpace, addTimeStamp,
-                                 eraseTimeStamp, operationSupport);
+    // Most recent delete timestamp
+    uint32_t eraseTimeStamp = getFileTimestamp(selEraseTimestamp);
+
+    if (!selCacheMapInitialized)
+    {
+        // In case the initSELCache() fails, try it again
+        initSELCache();
+    }
+    if (!selCacheMap.empty())
+    {
+        entries = static_cast<uint16_t>(selCacheMap.size());
+
+        try
+        {
+            auto objPath = getLoggingObjPath(selCacheMap.rbegin()->first);
+            addTimeStamp =
+                static_cast<uint32_t>(getEntryTimeStamp(objPath).count());
+        }
+        catch (const std::runtime_error& e)
+        {
+            log<level::ERR>(e.what());
+        }
+    }
+    constexpr uint8_t selVersion = ipmi::sel::selVersion;
+    uint16_t freeSpace = 0xffff;
+    constexpr uint3_t reserved{0};
+
+    return ipmi::responseSuccess(
+        selVersion, entries, freeSpace, addTimeStamp, eraseTimeStamp,
+        ipmi::sel::operationSupport::getSelAllocationInfo,
+        ipmi::sel::operationSupport::reserveSel,
+        ipmi::sel::operationSupport::partialAddSelEntry,
+        ipmi::sel::operationSupport::deleteSel, reserved,
+        ipmi::sel::operationSupport::overflow);
 }
 
 using systemEventType = std::tuple<
@@ -916,24 +1403,15 @@ using oemTsEventType = std::tuple<
 using oemEventType =
     std::array<uint8_t, intel_oem::ipmi::sel::oemEventSize>;     // Event Data
 
-ipmi::RspType<uint16_t,                   // Next Record ID
-              uint16_t,                   // Record ID
-              uint8_t,                    // Record Type
+ipmi::RspType<uint16_t, // Next Record ID
+              uint16_t, // Record ID
+              uint8_t,  // Record Type
               std::variant<systemEventType, oemTsEventType,
                            oemEventType>> // Record Content
-    ipmiStorageGetSELEntry(uint16_t reservationID, uint16_t targetID,
-                           uint8_t offset, uint8_t size)
+    ipmiStorageGetSELEntry(uint16_t reservationID, uint16_t selRecordID,
+                          [[maybe_unused]] uint8_t offset,[[maybe_unused]] uint8_t readLength)
 {
-    // Only support getting the entire SEL record. If a partial size or non-zero
-    // offset is requested, return an error
-    if (offset != 0 || size != ipmi::sel::entireRecord)
-    {
-        return ipmi::responseRetBytesUnavailable();
-    }
-
-    // Check the reservation ID if one is provided or required (only if the
-    // offset is non-zero)
-    if (reservationID != 0 || offset != 0)
+    if (reservationID != 0)
     {
         if (!checkSELReservation(reservationID))
         {
@@ -941,286 +1419,271 @@ ipmi::RspType<uint16_t,                   // Next Record ID
         }
     }
 
-    // Get the ipmi_sel log files
-    std::vector<std::filesystem::path> selLogFiles;
-    if (!getSELLogFiles(selLogFiles))
+    if (!selCacheMapInitialized)
+    {
+	    initSELCache();
+	    selCacheMapInitialized = true;
+    }
+
+    if (selCacheMap.empty())
     {
         return ipmi::responseSensorInvalid();
     }
 
-    std::string targetEntry;
-
-    if (targetID == ipmi::sel::firstEntry)
+    SELCacheMap::const_iterator iter;
+    if (selRecordID == ipmi::sel::firstEntry)
     {
-        // The first entry will be at the top of the oldest log file
-        std::ifstream logStream(selLogFiles.back());
-        if (!logStream.is_open())
-        {
-            return ipmi::responseUnspecifiedError();
-        }
-
-        if (!std::getline(logStream, targetEntry))
-        {
-            return ipmi::responseUnspecifiedError();
-        }
+        iter = selCacheMap.begin();
     }
-    else if (targetID == ipmi::sel::lastEntry)
+    else if (selRecordID == ipmi::sel::lastEntry)
     {
-        // The last entry will be at the bottom of the newest log file
-        std::ifstream logStream(selLogFiles.front());
-        if (!logStream.is_open())
+        if (selCacheMap.size() > 1)
         {
-            return ipmi::responseUnspecifiedError();
+            iter = selCacheMap.end();
+            --iter;
         }
-
-        std::string line;
-        while (std::getline(logStream, line))
+        else
         {
-            targetEntry = line;
+            // Only one entry exists, return the first
+            iter = selCacheMap.begin();
         }
     }
     else
     {
-        if (!findSELEntry(targetID, selLogFiles, targetEntry))
+        iter = selCacheMap.find(selRecordID);
+        if (iter == selCacheMap.end())
         {
             return ipmi::responseSensorInvalid();
         }
     }
+    ipmi::sel::GetSELEntryResponse record{0, iter->second};
 
-    // The format of the ipmi_sel message is "<Timestamp>
-    // <ID>,<Type>,<EventData>,[<Generator ID>,<Path>,<Direction>]".
-    // First get the Timestamp
-    size_t space = targetEntry.find_first_of(" ");
-    if (space == std::string::npos)
-    {
-        return ipmi::responseUnspecifiedError();
-    }
-    std::string entryTimestamp = targetEntry.substr(0, space);
-    // Then get the log contents
-    size_t entryStart = targetEntry.find_first_not_of(" ", space);
-    if (entryStart == std::string::npos)
-    {
-        return ipmi::responseUnspecifiedError();
-    }
-    std::string_view entry(targetEntry);
-    entry.remove_prefix(entryStart);
-    // Use split to separate the entry into its fields
-    std::vector<std::string> targetEntryFields;
-    boost::split(targetEntryFields, entry, boost::is_any_of(","),
-                 boost::token_compress_on);
-    if (targetEntryFields.size() < 3)
-    {
-        return ipmi::responseUnspecifiedError();
-    }
-    std::string& recordIDStr = targetEntryFields[0];
-    std::string& recordTypeStr = targetEntryFields[1];
-    std::string& eventDataStr = targetEntryFields[2];
+    // Identify the next SEL record ID
+    ++iter;
 
-    uint16_t recordID;
-    uint8_t recordType;
-    try
+    if (iter == selCacheMap.end())
     {
-        recordID = std::stoul(recordIDStr);
-        recordType = std::stoul(recordTypeStr, nullptr, 16);
+        record.nextRecordID = ipmi::sel::lastEntry;
     }
-    catch (const std::invalid_argument&)
+    else
     {
-        return ipmi::responseUnspecifiedError();
-    }
-    uint16_t nextRecordID = getNextRecordID(recordID, selLogFiles);
-    std::vector<uint8_t> eventDataBytes;
-    if (fromHexStr(eventDataStr, eventDataBytes) < 0)
-    {
-        return ipmi::responseUnspecifiedError();
+        record.nextRecordID = iter->first;
     }
 
-    if (recordType == intel_oem::ipmi::sel::systemEvent)
-    {
-        // Get the timestamp
-        std::tm timeStruct = {};
-        std::istringstream entryStream(entryTimestamp);
-
-        uint32_t timestamp = ipmi::sel::invalidTimeStamp;
-        if (entryStream >> std::get_time(&timeStruct, "%Y-%m-%dT%H:%M:%S"))
-        {
-            timestamp = std::mktime(&timeStruct);
-        }
-
-        // Set the event message revision
-        uint8_t evmRev = intel_oem::ipmi::sel::eventMsgRev;
-
-        uint16_t generatorID = 0;
-        uint8_t sensorType = 0;
-        uint16_t sensorAndLun = 0;
-        uint8_t sensorNum = 0xFF;
-        uint7_t eventType = 0;
-        bool eventDir = 0;
-        // System type events should have six fields
-        if (targetEntryFields.size() >= 6)
-        {
-            std::string& generatorIDStr = targetEntryFields[3];
-            std::string& sensorPath = targetEntryFields[4];
-            std::string& eventDirStr = targetEntryFields[5];
-
-            // Get the generator ID
-            try
-            {
-                generatorID = std::stoul(generatorIDStr, nullptr, 16);
-            }
-            catch (const std::invalid_argument&)
-            {
-                std::cerr << "Invalid Generator ID\n";
-            }
-
-            // Get the sensor type, sensor number, and event type for the sensor
-            sensorType = getSensorTypeFromPath(sensorPath);
-            sensorAndLun = getSensorNumberFromPath(sensorPath);
-            sensorNum = static_cast<uint8_t>(sensorAndLun);
-            generatorID |= sensorAndLun >> 8;
-            eventType = getSensorEventTypeFromPath(sensorPath);
-
-            // Get the event direction
-            try
-            {
-                eventDir = std::stoul(eventDirStr) ? 0 : 1;
-            }
-            catch (const std::invalid_argument&)
-            {
-                std::cerr << "Invalid Event Direction\n";
-            }
-        }
-
-        // Only keep the eventData bytes that fit in the record
-        std::array<uint8_t, intel_oem::ipmi::sel::systemEventSize> eventData{};
-        std::copy_n(eventDataBytes.begin(),
-                    std::min(eventDataBytes.size(), eventData.size()),
-                    eventData.begin());
-
-        return ipmi::responseSuccess(
-            nextRecordID, recordID, recordType,
-            systemEventType{timestamp, generatorID, evmRev, sensorType,
-                            sensorNum, eventType, eventDir, eventData});
-    }
-    else if (recordType >= intel_oem::ipmi::sel::oemTsEventFirst &&
-             recordType <= intel_oem::ipmi::sel::oemTsEventLast)
-    {
-        // Get the timestamp
-        std::tm timeStruct = {};
-        std::istringstream entryStream(entryTimestamp);
-
-        uint32_t timestamp = ipmi::sel::invalidTimeStamp;
-        if (entryStream >> std::get_time(&timeStruct, "%Y-%m-%dT%H:%M:%S"))
-        {
-            timestamp = std::mktime(&timeStruct);
-        }
-
-        // Only keep the bytes that fit in the record
-        std::array<uint8_t, intel_oem::ipmi::sel::oemTsEventSize> eventData{};
-        std::copy_n(eventDataBytes.begin(),
-                    std::min(eventDataBytes.size(), eventData.size()),
-                    eventData.begin());
-
-        return ipmi::responseSuccess(nextRecordID, recordID, recordType,
-                                     oemTsEventType{timestamp, eventData});
-    }
-    else if (recordType >= intel_oem::ipmi::sel::oemEventFirst)
-    {
-        // Only keep the bytes that fit in the record
-        std::array<uint8_t, intel_oem::ipmi::sel::oemEventSize> eventData{};
-        std::copy_n(eventDataBytes.begin(),
-                    std::min(eventDataBytes.size(), eventData.size()),
-                    eventData.begin());
-
-        return ipmi::responseSuccess(nextRecordID, recordID, recordType,
-                                     eventData);
-    }
-
-    return ipmi::responseUnspecifiedError();
+    bool eventDir = record.event.eventRecord.eventType >> 7;
+    uint7_t eventType = record.event.eventRecord.eventType;
+    std::array<uint8_t, 3> eventData{record.event.eventRecord.eventData1,
+                                     record.event.eventRecord.eventData2,
+                                     record.event.eventRecord.eventData3};
+    return ipmi::responseSuccess(
+        static_cast<uint16_t>(record.nextRecordID),
+        static_cast<uint16_t>(record.event.eventRecord.recordID),
+        static_cast<uint8_t>(record.event.eventRecord.recordType),
+        systemEventType{
+            static_cast<uint32_t>(record.event.eventRecord.timeStamp),
+            static_cast<uint8_t>(record.event.eventRecord.generatorID),
+            static_cast<uint8_t>(record.event.eventRecord.eventMsgRevision),
+            static_cast<uint8_t>(record.event.eventRecord.sensorType),
+            static_cast<uint8_t>(record.event.eventRecord.sensorNum), eventType,
+            eventDir, eventData});
 }
 
-ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
-    uint16_t recordID, uint8_t recordType, uint32_t timestamp,
-    uint16_t generatorID, uint8_t evmRev, uint8_t sensorType, uint8_t sensorNum,
-    uint8_t eventType, uint8_t eventData1, uint8_t eventData2,
-    uint8_t eventData3)
+ipmi::RspType<uint16_t>
+    ipmiStorageAddSELEntry(uint16_t recordID, uint8_t recordType,
+                           [[maybe_unused]] uint32_t timeStamp, uint16_t generatorID,
+                           [[maybe_unused]] uint8_t evmRev, uint8_t sensorType,
+                           uint8_t sensorNumber, uint8_t eventDir,
+                           std::array<uint8_t, eventDataSize> eventData)
+
 {
-    // Per the IPMI spec, need to cancel any reservation when a SEL entry is
-    // added
+    static constexpr auto systemRecordType = 0x02;
     cancelSELReservation();
+    auto selDataStr = ipmi::sel::toHexStr(eventData);
+    if (recordType == systemRecordType)
+    {
+        std::string objpath("");
+        uint8_t typeFromPath;
+        try
+        {
+            objpath = getPathFromSensorNumber(sensorNumber, sensorType);
+            typeFromPath = getSensorTypeFromPath(objpath);
+            if (typeFromPath !=
+                sensorType) // if sensorType not matching, we assume sensor not
+                            // available so prioprity is givien to IPMI Type
+            {
+                objpath.clear();
+            }
+        }
+        catch (...)
+        {
+            log<level::ERR>("Failed to get sensor object path");
+        }
+        bool assert = (eventDir & 0x80) ? false : true;
+        std::string redfishMessage = intel_oem::ipmi::sel::checkRedfishMessage(
+            generatorID, sensorType, sensorNumber, eventDir, eventData[0]);
 
-    // Send this request to the Redfish hooks to log it as a Redfish message
-    // instead.  There is no need to add it to the SEL, so just return success.
-    intel_oem::ipmi::sel::checkRedfishHooks(
-        recordID, recordType, timestamp, generatorID, evmRev, sensorType,
-        sensorNum, eventType, eventData1, eventData2, eventData3);
+        sdbusplus::bus::bus bus(ipmid_get_sd_bus_connection());
+        std::map<std::string, std::string> addData;
+        addData["SENSOR_DATA"] = selDataStr.c_str();
+        addData["SENSOR_PATH"] = objpath.c_str();
+        addData["EVENT_DIR"] = std::to_string(assert);
+        addData["GENERATOR_ID"] = std::to_string(generatorID);
+        addData["RECORD_TYPE"] = std::to_string(recordType);
+        addData["SENSOR_TYPE"] = std::to_string(sensorType);
+        try
+        {
+            std::string service =
+                ipmi::getService(bus, ipmiSELAddInterface, ipmiSELPath);
+            auto addSEL =
+                bus.new_method_call(service.c_str(), ipmiSELPath,
+                                    ipmiSELAddInterface, "IpmiSelAdd");
+            addSEL.append(redfishMessage, objpath.c_str(), eventData, assert,
+                          generatorID, addData);
+            bus.call_noreply(addSEL);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Failed to create D-Bus log entry for SEL, ERROR="
+                      << e.what() << "\n";
+        }
+    }
+    else
+        return ipmi::responseUnspecifiedError();
 
-    uint16_t responseID = 0xFFFF;
-    return ipmi::responseSuccess(responseID);
+    if (selCacheMap.empty())
+    {
+        recordID = ami::ipmi::sel::firstEntryId;
+        return ipmi::responseSuccess(recordID);
+    }
+
+    auto beginIter = selCacheMap.rbegin();
+    recordID = beginIter->first;
+
+    return ipmi::responseSuccess(++recordID);
 }
 
-ipmi::RspType<uint8_t> ipmiStorageClearSEL(ipmi::Context::ptr&,
-                                           uint16_t reservationID,
-                                           const std::array<uint8_t, 3>& clr,
+ipmi::RspType<uint8_t> ipmiStorageClearSEL(uint16_t reservationID,
+                                           const std::array<char, 3>& clr,
                                            uint8_t eraseOperation)
+
 {
+    static constexpr std::array<char, 3> clrOk = {'C', 'L', 'R'};
+    if (clr != clrOk)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
     if (!checkSELReservation(reservationID))
     {
         return ipmi::responseInvalidReservationId();
     }
 
-    static constexpr std::array<uint8_t, 3> clrExpected = {'C', 'L', 'R'};
-    if (clr != clrExpected)
-    {
-        return ipmi::responseInvalidFieldRequest();
-    }
-
-    // Erasure status cannot be fetched, so always return erasure status as
-    // `erase completed`.
+    /*
+     * Erasure status cannot be fetched from DBUS, so always return erasure
+     * status as `erase completed`.
+     */
     if (eraseOperation == ipmi::sel::getEraseStatus)
     {
-        return ipmi::responseSuccess(ipmi::sel::eraseComplete);
+        return ipmi::responseSuccess(
+            static_cast<uint8_t>(ipmi::sel::eraseComplete));
     }
-
-    // Check that initiate erase is correct
-    if (eraseOperation != ipmi::sel::initiateErase)
-    {
-        return ipmi::responseInvalidFieldRequest();
-    }
-
-    // Per the IPMI spec, need to cancel any reservation when the SEL is
-    // cleared
+    // Per the IPMI spec, need to cancel any reservation when the SEL is cleared
     cancelSELReservation();
 
-    // Save the erase time
-    intel_oem::ipmi::sel::erase_time::save();
-
-    // Clear the SEL by deleting the log files
-    std::vector<std::filesystem::path> selLogFiles;
-    if (getSELLogFiles(selLogFiles))
-    {
-        for (const std::filesystem::path& file : selLogFiles)
-        {
-            std::error_code ec;
-            std::filesystem::remove(file, ec);
-        }
-    }
-
-    // Reload rsyslog so it knows to start new log files
-    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
-    sdbusplus::message_t rsyslogReload = dbus->new_method_call(
-        "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
-        "org.freedesktop.systemd1.Manager", "ReloadUnit");
-    rsyslogReload.append("rsyslog.service", "replace");
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    auto service = ipmi::getService(bus, ipmi::sel::logIntf, ipmi::sel::logObj);
+    auto method =
+        bus.new_method_call(service.c_str(), ipmi::sel::logObj,
+                            ipmi::sel::logIntf, ipmi::sel::logDeleteAllMethod);
     try
     {
-        sdbusplus::message_t reloadResponse = dbus->call(rsyslogReload);
+        bus.call_noreply(method);
     }
-    catch (const sdbusplus::exception_t& e)
+    catch (const sdbusplus::exception::exception& e)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
+        log<level::ERR>("Error eraseAll ", entry("ERROR=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
     }
 
-    return ipmi::responseSuccess(ipmi::sel::eraseComplete);
+    return ipmi::responseSuccess(
+        static_cast<uint8_t>(ipmi::sel::eraseComplete));
+}
+
+/** @brief implements the delete SEL entry command
+ * @request
+ *   - reservationID; // reservation ID.
+ *   - selRecordID;   // SEL record ID.
+ *
+ *  @returns ipmi completion code plus response data
+ *   - Record ID of the deleted record
+ */
+ipmi::RspType<uint16_t // deleted record ID
+              >
+    deleteSELEntry(uint16_t reservationID, uint16_t selRecordID)
+{
+    namespace fs = std::filesystem;
+
+    if (!checkSELReservation(reservationID))
+    {
+        return ipmi::responseInvalidReservationId();
+    }
+
+    // Per the IPMI spec, need to cancel the reservation when a SEL entry is
+    // deleted
+    cancelSELReservation();
+
+    if (!selCacheMapInitialized)
+    {
+        // In case the initSELCache() fails, try it again
+        initSELCache();
+    }
+    if (selCacheMap.empty())
+    {
+        return ipmi::responseSensorInvalid();
+    }
+    SELCacheMap::const_iterator iter;
+    uint16_t delRecordID = 0;
+    if (selRecordID == ipmi::sel::firstEntry)
+    {
+        delRecordID = selCacheMap.begin()->first;
+    }
+    else if (selRecordID == ipmi::sel::lastEntry)
+    {
+        delRecordID = selCacheMap.rbegin()->first;
+    }
+    else
+    {
+        iter = selCacheMap.find(selRecordID);
+        if (iter == selCacheMap.end())
+        {
+            return ipmi::responseSensorInvalid();
+        }
+        delRecordID = selRecordID;
+    }
+
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    std::string service;
+
+    auto objPath = getLoggingObjPath(iter->first);
+    try
+    {
+        service = ipmi::getService(bus, ipmi::sel::logDeleteIntf, objPath);
+    }
+    catch (const std::runtime_error& e)
+    {
+        log<level::ERR>(e.what());
+        return ipmi::responseUnspecifiedError();
+    }
+
+    auto methodCall = bus.new_method_call(service.c_str(), objPath.c_str(),
+                                          ipmi::sel::logDeleteIntf, "Delete");
+    auto reply = bus.call(methodCall);
+    if (reply.is_method_error())
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess(delRecordID);
 }
 
 ipmi::RspType<uint32_t> ipmiStorageGetSELTime()
@@ -1233,12 +1696,6 @@ ipmi::RspType<uint32_t> ipmiStorageGetSELTime()
     }
 
     return ipmi::responseSuccess(selTime.tv_sec);
-}
-
-ipmi::RspType<> ipmiStorageSetSELTime([[maybe_unused]] uint32_t selTime)
-{
-    // Set SEL Time is not supported
-    return ipmi::responseInvalidCommand();
 }
 
 std::vector<uint8_t> getType12SDRs(uint16_t index, uint16_t recordId)
@@ -1341,15 +1798,16 @@ void registerStorageFunctions()
                           ipmi::storage::cmdClearSel, ipmi::Privilege::Operator,
                           ipmiStorageClearSEL);
 
+    // <Delete SEL Entry>
+    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
+                          ipmi::storage::cmdDeleteSelEntry,
+                          ipmi::Privilege::Operator, deleteSELEntry);
+
     // <Get SEL Time>
     ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
                           ipmi::storage::cmdGetSelTime, ipmi::Privilege::User,
                           ipmiStorageGetSELTime);
 
-    // <Set SEL Time>
-    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
-                          ipmi::storage::cmdSetSelTime,
-                          ipmi::Privilege::Operator, ipmiStorageSetSELTime);
 }
 } // namespace storage
 } // namespace ipmi
