@@ -220,7 +220,25 @@ class IPMIStatsTable
 
 // This object is global singleton, used from a variety of places
 inline IPMIStatsTable sdrStatsTable;
+inline static void filterSensors(SensorSubTree& subtree)
+{
+    subtree.erase(
+        std::remove_if(subtree.begin(), subtree.end(),
+                       [](SensorSubTree::value_type& kv) {
+                           auto& [_, serviceToIfaces] = kv;
 
+                           static std::array<const char*, 1> serviceFilter = {
+                               "xyz.openbmc_project.Pmt"};
+
+                           for (const char* service : serviceFilter)
+                           {
+                               serviceToIfaces.erase(service);
+                           }
+
+                           return serviceToIfaces.empty();
+                       }),
+        subtree.end());
+}
 inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
 {
     static std::shared_ptr<SensorSubTree> sensorTreePtr;
@@ -277,6 +295,7 @@ inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
         phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
         return sensorUpdatedIndex;
     }
+    filterSensors(*sensorTreePtr);
     subtree = sensorTreePtr;
     sensorUpdatedIndex++;
     // The SDR is being regenerated, wipe the old stats

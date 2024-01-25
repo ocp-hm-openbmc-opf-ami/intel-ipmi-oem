@@ -20,7 +20,9 @@
 #include <oemcommands.hpp>
 
 constexpr uint8_t maxDirEntries = 4;
+constexpr uint8_t maxAgentID = 2;
 constexpr uint16_t msgPayloadSize = 1024 * 60;
+constexpr uint32_t acpiTableStorageSize = 737 * 1024;
 constexpr uint32_t smbiosTableStorageSize = 64 * 1024;
 constexpr uint32_t mdriiSMSize = 0x00100000;
 

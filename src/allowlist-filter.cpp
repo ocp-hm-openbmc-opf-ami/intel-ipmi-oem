@@ -2,6 +2,7 @@
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
 #include <phosphor-logging/log.hpp>
+#include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Control/Security/RestrictionMode/server.hpp>
 
 #include <algorithm>

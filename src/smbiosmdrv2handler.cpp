@@ -31,6 +31,7 @@
 #include <xyz/openbmc_project/Common/error.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -48,14 +49,19 @@ int MDRV2::agentLookup(const uint16_t& agentId)
 
     if (lastAgentId == agentId)
     {
+        currentAgentIndex = lastAgentIndex;
         return lastAgentIndex;
     }
-
     if (agentId == smbiosAgentId)
     {
+        currentAgentIndex = firstAgentIndex;
         return firstAgentIndex;
     }
-
+    else if (agentId == acpiAgentId)
+    {
+        currentAgentIndex = acpiAgentIndex;
+        return acpiAgentIndex;
+    }
     return agentIndex;
 }
 
@@ -64,12 +70,11 @@ int MDRV2::sdplusMdrv2GetProperty(const std::string& name,
                                   const std::string& service)
 {
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    sdbusplus::message_t method =
-        bus->new_method_call(service.c_str(), mdrv2Path, dbusProperties, "Get");
-    method.append(mdrv2Interface, name);
-
+    sdbusplus::message_t method = bus->new_method_call(
+        service.c_str(), mdrv2Dir[currentAgentIndex].mdrv2Path, dbusProperties,
+        "Get");
+    method.append(mdrv2Dir[currentAgentIndex].mdrv2Interface, name);
     sdbusplus::message_t reply = bus->call(method);
-
     try
     {
         sdbusplus::message_t reply = bus->call(method);
@@ -86,14 +91,15 @@ int MDRV2::sdplusMdrv2GetProperty(const std::string& name,
     return 0;
 }
 
-int MDRV2::syncDirCommonData(uint8_t idIndex, uint32_t size,
+int MDRV2::syncDirCommonData(int agentIndex, uint8_t idIndex, uint32_t size,
                              const std::string& service)
 {
     std::vector<uint32_t> commonData;
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    sdbusplus::message_t method =
-        bus->new_method_call(service.c_str(), mdrv2Path, mdrv2Interface,
-                             "SynchronizeDirectoryCommonData");
+    sdbusplus::message_t method = bus->new_method_call(
+        service.c_str(), mdrv2Dir[currentAgentIndex].mdrv2Path,
+        mdrv2Dir[currentAgentIndex].mdrv2Interface,
+        "SynchronizeDirectoryCommonData");
     method.append(idIndex, size);
 
     try
@@ -115,9 +121,9 @@ int MDRV2::syncDirCommonData(uint8_t idIndex, uint32_t size,
             "Error sync dir common data - data length invalid");
         return -1;
     }
-    smbiosDir.dir[idIndex].common.dataSetSize = commonData.at(0);
-    smbiosDir.dir[idIndex].common.dataVersion = commonData.at(1);
-    smbiosDir.dir[idIndex].common.timestamp = commonData.at(2);
+    mdrv2Dir[agentIndex].dir[idIndex].common.dataSetSize = commonData.at(0);
+    mdrv2Dir[agentIndex].dir[idIndex].common.dataVersion = commonData.at(1);
+    mdrv2Dir[agentIndex].dir[idIndex].common.timestamp = commonData.at(2);
 
     return 0;
 }
@@ -136,7 +142,8 @@ int MDRV2::findDataId(const uint8_t* dataInfo, const size_t& len,
 
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
     sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "FindIdIndex");
+        service.c_str(), mdrv2Dir[currentAgentIndex].mdrv2Path,
+        mdrv2Dir[currentAgentIndex].mdrv2Interface, "FindIdIndex");
     std::vector<uint8_t> info;
     info.resize(len);
     std::copy(dataInfo, dataInfo + len, info.data());
@@ -153,7 +160,8 @@ int MDRV2::findDataId(const uint8_t* dataInfo, const size_t& len,
             "Error find id index",
             phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2Dir[currentAgentIndex].mdrv2Path));
         return -1;
     }
 
@@ -177,13 +185,13 @@ uint16_t MDRV2::getSessionHandle(Mdr2DirStruct* dir)
     return dir->sessionHandle;
 }
 
-int MDRV2::findLockHandle(const uint16_t& lockHandle)
+int MDRV2::findLockHandle(int agentIndex, const uint16_t& lockHandle)
 {
     int idIndex = -1;
 
-    for (int index = 0; index < smbiosDir.dirEntries; index++)
+    for (int index = 0; index < mdrv2Dir[agentIndex].dirEntries; index++)
     {
-        if (lockHandle == smbiosDir.dir[index].lockHandle)
+        if (lockHandle == mdrv2Dir[agentIndex].dir[index].lockHandle)
         {
             return index;
         }
@@ -192,13 +200,14 @@ int MDRV2::findLockHandle(const uint16_t& lockHandle)
     return idIndex;
 }
 
-bool MDRV2::smbiosIsUpdating(uint8_t index)
+bool MDRV2::smbiosIsUpdating(int agentIndex, uint8_t index)
 {
     if (index >= maxDirEntries)
     {
         return false;
     }
-    if (smbiosDir.dir[index].stage == MDR2SMBIOSStatusEnum::mdr2Updating)
+    if (mdrv2Dir[agentIndex].dir[index].stage ==
+        MDR2SMBIOSStatusEnum::mdr2Updating)
     {
         return true;
     }
@@ -252,13 +261,13 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t>
 
     constexpr uint8_t mdrVersion = mdr2Version;
     constexpr uint8_t agentVersion = smbiosAgentVersion;
-    uint8_t dirVersionResp = mdrv2->smbiosDir.dirVersion;
-    uint8_t dirEntries = mdrv2->smbiosDir.dirEntries;
+    uint8_t dirVersionResp = mdrv2->mdrv2Dir[agentIndex].dirVersion;
+    uint8_t dirEntries = mdrv2->mdrv2Dir[agentIndex].dirEntries;
     uint8_t dataRequest;
 
-    if (mdrv2->smbiosDir.remoteDirVersion != dirVersion)
+    if (mdrv2->mdrv2Dir[agentIndex].remoteDirVersion != dirVersion)
     {
-        mdrv2->smbiosDir.remoteDirVersion = dirVersion;
+        mdrv2->mdrv2Dir[agentIndex].remoteDirVersion = dirVersion;
         dataRequest =
             static_cast<uint8_t>(DirDataRequestEnum::dirDataRequested);
     }
@@ -282,7 +291,6 @@ ipmi::RspType<std::vector<uint8_t>> mdr2GetDir(uint16_t agentId,
                                                uint8_t dirIndex)
 {
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
 
     if (mdrv2 == nullptr)
     {
@@ -298,6 +306,18 @@ ipmi::RspType<std::vector<uint8_t>> mdr2GetDir(uint16_t agentId,
     }
 
     ipmi::DbusVariant value = static_cast<uint8_t>(0);
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Current agent dont support a service to store the dir information",
+            phosphor::logging::entry("AGENT=%x", agentIndex));
+        return ipmi::responseUnspecifiedError();
+    }
+    std::string service =
+        ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                         mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
     if (0 != mdrv2->sdplusMdrv2GetProperty("DirectoryEntries", value, service))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -317,7 +337,8 @@ ipmi::RspType<std::vector<uint8_t>> mdr2GetDir(uint16_t agentId,
     }
 
     sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "GetDirectoryInformation");
+        service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "GetDirectoryInformation");
 
     method.append(dirIndex);
 
@@ -332,7 +353,8 @@ ipmi::RspType<std::vector<uint8_t>> mdr2GetDir(uint16_t agentId,
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Error get dir", phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
         return ipmi::responseResponseError();
     }
 
@@ -381,7 +403,6 @@ ipmi::RspType<bool> mdr2SendDir(uint16_t agentId, uint8_t dirVersion,
     }
 
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
 
     if (mdrv2 == nullptr)
     {
@@ -396,6 +417,19 @@ ipmi::RspType<bool> mdr2SendDir(uint16_t agentId, uint8_t dirVersion,
         return ipmi::responseParmOutOfRange();
     }
 
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Current agent dont support a service to store the dir information",
+            phosphor::logging::entry("AGENT=%x", agentIndex));
+        return ipmi::responseUnspecifiedError();
+    }
+    std::string service =
+        ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                         mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+
     if ((dirIndex + returnedEntries) > maxDirEntries)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -404,7 +438,8 @@ ipmi::RspType<bool> mdr2SendDir(uint16_t agentId, uint8_t dirVersion,
     }
 
     sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "SendDirectoryInformation");
+        service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "SendDirectoryInformation");
     method.append(dirVersion, dirIndex, returnedEntries, remainingEntries,
                   dataInfo);
 
@@ -419,7 +454,8 @@ ipmi::RspType<bool> mdr2SendDir(uint16_t agentId, uint8_t dirVersion,
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Error send dir", phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
         return ipmi::responseResponseError();
     }
 
@@ -445,7 +481,6 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
 
     if (mdrv2 == nullptr)
     {
@@ -460,6 +495,19 @@ ipmi::RspType<std::vector<uint8_t>>
         return ipmi::responseParmOutOfRange();
     }
 
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Current agent dont support a service to store the dir information",
+            phosphor::logging::entry("AGENT=%x", agentIndex));
+        return ipmi::responseUnspecifiedError();
+    }
+    std::string service =
+        ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                         mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+
     int idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
@@ -470,7 +518,8 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 
     sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "GetDataInformation");
+        service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "GetDataInformation");
 
     method.append(static_cast<uint8_t>(idIndex));
 
@@ -486,7 +535,8 @@ ipmi::RspType<std::vector<uint8_t>>
             "Error get data info",
             phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
         return ipmi::responseResponseError();
     }
 
@@ -509,7 +559,6 @@ ipmi::RspType<std::vector<uint8_t>>
 ipmi::RspType<std::vector<uint8_t>> mdr2DataInfoOffer(uint16_t agentId)
 {
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
 
     if (mdrv2 == nullptr)
     {
@@ -524,10 +573,25 @@ ipmi::RspType<std::vector<uint8_t>> mdr2DataInfoOffer(uint16_t agentId)
         return ipmi::responseParmOutOfRange();
     }
 
-    sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "GetDataOffer");
-
     std::vector<uint8_t> dataOut;
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
+    {
+        dataOut.resize(sizeof(DataIdStruct));
+        std::copy(mdrv2->mdrv2Dir[agentIndex].dir[0].common.id.dataInfo,
+                  &mdrv2->mdrv2Dir[agentIndex].dir[0].common.id.dataInfo[16],
+                  dataOut.data());
+        return ipmi::responseSuccess(dataOut);
+    }
+    std::string service =
+        ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                         mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+
+    sdbusplus::message_t method = bus->new_method_call(
+        service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "GetDataOffer");
+
     try
     {
         sdbusplus::message_t reply = bus->call(method);
@@ -539,7 +603,8 @@ ipmi::RspType<std::vector<uint8_t>> mdr2DataInfoOffer(uint16_t agentId)
             "Error send data info offer",
             phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
         return ipmi::responseResponseError();
     }
 
@@ -570,16 +635,6 @@ ipmi::RspType<bool> mdr2SendDataInfo(uint16_t agentId,
                                      uint8_t validFlag, uint32_t dataLength,
                                      uint32_t dataVersion, uint32_t timeStamp)
 {
-    if (dataLength > smbiosTableStorageSize)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Requested data length is out of SMBIOS Table storage size.");
-        return ipmi::responseParmOutOfRange();
-    }
-
-    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
-
     if (mdrv2 == nullptr)
     {
         mdrv2 = std::make_unique<MDRV2>();
@@ -593,6 +648,26 @@ ipmi::RspType<bool> mdr2SendDataInfo(uint16_t agentId,
         return ipmi::responseParmOutOfRange();
     }
 
+    if (dataLength > mdrv2->mdrv2Dir[agentIndex].dir[mdrv2DirIndex].maxDataSize)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Requested data length is out of Table storage size.");
+        return ipmi::responseParmOutOfRange();
+    }
+
+    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+
+    bool entryChanged = true;
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
+    {
+        return ipmi::responseSuccess(entryChanged);
+    }
+    std::string service =
+        ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                         mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+
     int idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
@@ -603,12 +678,12 @@ ipmi::RspType<bool> mdr2SendDataInfo(uint16_t agentId,
     }
 
     sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "SendDataInformation");
+        service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "SendDataInformation");
 
     method.append((uint8_t)idIndex, validFlag, dataLength, dataVersion,
                   timeStamp);
 
-    bool entryChanged = true;
     try
     {
         sdbusplus::message_t reply = bus->call(method);
@@ -620,7 +695,8 @@ ipmi::RspType<bool> mdr2SendDataInfo(uint16_t agentId,
             "Error send data info",
             phosphor::logging::entry("ERROR=%s", e.what()),
             phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
+            phosphor::logging::entry("PATH=%s",
+                                     mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
         return ipmi::responseResponseError();
     }
 
@@ -660,7 +736,7 @@ ipmi::RspType<uint32_t,            // xferLength
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findLockHandle(lockHandle);
+    int idIndex = mdrv2->findLockHandle(agentIndex, lockHandle);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
     {
@@ -669,25 +745,28 @@ ipmi::RspType<uint32_t,            // xferLength
         return ipmi::responseParmOutOfRange();
     }
 
-    if (xferOffset >= mdrv2->smbiosDir.dir[idIndex].common.size)
+    if (xferOffset >= mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Offset is outside of range.");
         return ipmi::responseParmOutOfRange();
     }
 
-    size_t outSize = (xferLength > mdrv2->smbiosDir.dir[idIndex].xferSize)
-                         ? mdrv2->smbiosDir.dir[idIndex].xferSize
-                         : xferLength;
+    size_t outSize =
+        (xferLength > mdrv2->mdrv2Dir[agentIndex].dir[idIndex].xferSize)
+            ? mdrv2->mdrv2Dir[agentIndex].dir[idIndex].xferSize
+            : xferLength;
     if (outSize > UINT_MAX - xferOffset)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Out size and offset are out of range");
         return ipmi::responseParmOutOfRange();
     }
-    if ((xferOffset + outSize) > mdrv2->smbiosDir.dir[idIndex].common.size)
+    if ((xferOffset + outSize) >
+        mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size)
     {
-        outSize = mdrv2->smbiosDir.dir[idIndex].common.size - xferOffset;
+        outSize = mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size -
+                  xferOffset;
     }
 
     uint32_t respXferLength = outSize;
@@ -700,8 +779,8 @@ ipmi::RspType<uint32_t,            // xferLength
     }
 
     if ((xferOffset + outSize) >
-        UINT_MAX -
-            reinterpret_cast<size_t>(mdrv2->smbiosDir.dir[idIndex].dataStorage))
+        UINT_MAX - reinterpret_cast<size_t>(
+                       mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Input data to calculate checksum is out of range");
@@ -709,7 +788,8 @@ ipmi::RspType<uint32_t,            // xferLength
     }
 
     uint32_t u32Checksum = mdrv2->calcChecksum32(
-        mdrv2->smbiosDir.dir[idIndex].dataStorage + xferOffset, outSize);
+        mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage + xferOffset,
+        outSize);
     if (u32Checksum == invalidChecksum)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -718,8 +798,9 @@ ipmi::RspType<uint32_t,            // xferLength
     }
     std::vector<uint8_t> data(outSize);
 
-    std::copy(&mdrv2->smbiosDir.dir[idIndex].dataStorage[xferOffset],
-              &mdrv2->smbiosDir.dir[idIndex].dataStorage[xferOffset + outSize],
+    std::copy(&mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage[xferOffset],
+              &mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage[xferOffset +
+                                                                    outSize],
               data.begin());
 
     return ipmi::responseSuccess(respXferLength, u32Checksum, data);
@@ -751,7 +832,7 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findLockHandle(lockHandle);
+    int idIndex = mdrv2->findLockHandle(agentIndex, lockHandle);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
     {
@@ -760,7 +841,7 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
         return ipmi::responseParmOutOfRange();
     }
 
-    if (mdrv2->smbiosIsUpdating(idIndex))
+    if (mdrv2->smbiosIsUpdating(agentIndex, idIndex))
     {
         if (xferOffset > UINT_MAX - xferLength)
         {
@@ -769,24 +850,24 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
             return ipmi::responseParmOutOfRange();
         }
         if (((xferOffset + xferLength) >
-             mdrv2->smbiosDir.dir[idIndex].maxDataSize) ||
+             mdrv2->mdrv2Dir[agentIndex].dir[idIndex].maxDataSize) ||
             ((xferOffset + xferLength) >
-             mdrv2->smbiosDir.dir[idIndex].common.dataSetSize))
+             mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.dataSetSize))
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "Send data block Invalid offset/length");
             return ipmi::responseReqDataLenExceeded();
         }
         if (reinterpret_cast<size_t>(
-                mdrv2->smbiosDir.dir[idIndex].dataStorage) >
+                mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage) >
             UINT_MAX - xferOffset)
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "Offset is out of range");
             return ipmi::responseParmOutOfRange();
         }
-        uint8_t* destAddr = mdrv2->smbiosDir.dir[idIndex].dataStorage +
-                            xferOffset;
+        uint8_t* destAddr =
+            mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage + xferOffset;
         uint8_t* sourceAddr = reinterpret_cast<uint8_t*>(mdrv2->area->vPtr);
         uint32_t calcChecksum = mdrv2->calcChecksum32(sourceAddr, xferLength);
         if (calcChecksum != checksum)
@@ -816,10 +897,12 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
     return ipmi::responseSuccess();
 }
 
-bool MDRV2::storeDatatoFlash(MDRSMBIOSHeader* mdrHdr, uint8_t* data)
+bool MDRV2::storeDatatoFlash(int agentIndex, MDRSMBIOSHeader* mdrHdr,
+                             uint8_t* data)
 {
-    std::ofstream smbiosFile(mdrType2File,
-                             std::ios_base::binary | std::ios_base::trunc);
+    std::ofstream smbiosFile(
+        reinterpret_cast<char*>(mdrv2Dir[agentIndex].fileName),
+        std::ios_base::binary | std::ios_base::trunc);
     if (!smbiosFile.good())
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -876,27 +959,30 @@ void SharedMemoryArea::Initialize(uint32_t addr, uint32_t areaSize)
     physicalAddr = addr;
 }
 
-bool MDRV2::smbiosUnlock(uint8_t index)
+bool MDRV2::smbiosUnlock(int agentIndex, uint8_t index)
 {
     bool ret = false;
-    switch (smbiosDir.dir[index].stage)
+    switch (mdrv2Dir[agentIndex].dir[index].stage)
     {
         case MDR2SMBIOSStatusEnum::mdr2Updating:
-            smbiosDir.dir[index].stage = MDR2SMBIOSStatusEnum::mdr2Updated;
-            smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirUnlock;
+            mdrv2Dir[agentIndex].dir[index].stage =
+                MDR2SMBIOSStatusEnum::mdr2Updated;
+            mdrv2Dir[agentIndex].dir[index].lock =
+                MDR2DirLockEnum::mdr2DirUnlock;
 
             timer->stop();
-            smbiosDir.dir[index].lockHandle = 0;
+            mdrv2Dir[agentIndex].dir[index].lockHandle = 0;
             ret = true;
             break;
 
         case MDR2SMBIOSStatusEnum::mdr2Updated:
         case MDR2SMBIOSStatusEnum::mdr2Loaded:
-            smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirUnlock;
+            mdrv2Dir[agentIndex].dir[index].lock =
+                MDR2DirLockEnum::mdr2DirUnlock;
 
             timer->stop();
 
-            smbiosDir.dir[index].lockHandle = 0;
+            mdrv2Dir[agentIndex].dir[index].lockHandle = 0;
             ret = true;
             break;
 
@@ -907,8 +993,8 @@ bool MDRV2::smbiosUnlock(uint8_t index)
     return ret;
 }
 
-bool MDRV2::smbiosTryLock(uint8_t flag, uint8_t index, uint16_t* session,
-                          uint16_t timeout)
+bool MDRV2::smbiosTryLock(int agentIndex, uint8_t flag, uint8_t index,
+                          uint16_t* session, uint16_t timeout)
 {
     bool ret = false;
 
@@ -918,54 +1004,62 @@ bool MDRV2::smbiosTryLock(uint8_t flag, uint8_t index, uint16_t* session,
     }
     std::chrono::microseconds usec(timeout * sysClock);
 
-    switch (smbiosDir.dir[index].stage)
+    switch (mdrv2Dir[agentIndex].dir[index].stage)
     {
         case MDR2SMBIOSStatusEnum::mdr2Updating:
-            if (smbiosDir.dir[index].lock != MDR2DirLockEnum::mdr2DirLock)
+            if (mdrv2Dir[agentIndex].dir[index].lock !=
+                MDR2DirLockEnum::mdr2DirLock)
             {
-                smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirLock;
+                mdrv2Dir[agentIndex].dir[index].lock =
+                    MDR2DirLockEnum::mdr2DirLock;
                 timer->start(usec);
                 lockIndex = index;
 
-                *session = getSessionHandle(&smbiosDir);
-                smbiosDir.dir[index].lockHandle = *session;
+                *session = getSessionHandle(&mdrv2Dir[agentIndex]);
+                mdrv2Dir[agentIndex].dir[index].lockHandle = *session;
+
                 ret = true;
             }
             break;
         case MDR2SMBIOSStatusEnum::mdr2Init:
             if (flag)
             {
-                smbiosDir.dir[index].stage = MDR2SMBIOSStatusEnum::mdr2Updating;
-                smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirUnlock;
+                mdrv2Dir[agentIndex].dir[index].stage =
+                    MDR2SMBIOSStatusEnum::mdr2Updating;
+                mdrv2Dir[agentIndex].dir[index].lock =
+                    MDR2DirLockEnum::mdr2DirUnlock;
                 timer->start(usec);
                 lockIndex = index;
 
-                *session = getSessionHandle(&smbiosDir);
-                smbiosDir.dir[index].lockHandle = *session;
+                *session = getSessionHandle(&mdrv2Dir[agentIndex]);
+                mdrv2Dir[agentIndex].dir[index].lockHandle = *session;
                 ret = true;
             }
             break;
 
         case MDR2SMBIOSStatusEnum::mdr2Updated:
         case MDR2SMBIOSStatusEnum::mdr2Loaded:
-            if (smbiosDir.dir[index].lock != MDR2DirLockEnum::mdr2DirLock)
+            if (mdrv2Dir[agentIndex].dir[index].lock !=
+                MDR2DirLockEnum::mdr2DirLock)
             {
                 if (flag)
                 {
-                    smbiosDir.dir[index].stage =
+                    mdrv2Dir[agentIndex].dir[index].stage =
                         MDR2SMBIOSStatusEnum::mdr2Updating;
-                    smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirUnlock;
+                    mdrv2Dir[agentIndex].dir[index].lock =
+                        MDR2DirLockEnum::mdr2DirUnlock;
                 }
                 else
                 {
-                    smbiosDir.dir[index].lock = MDR2DirLockEnum::mdr2DirLock;
+                    mdrv2Dir[agentIndex].dir[index].lock =
+                        MDR2DirLockEnum::mdr2DirLock;
                 }
 
                 timer->start(usec);
                 lockIndex = index;
 
-                *session = getSessionHandle(&smbiosDir);
-                smbiosDir.dir[index].lockHandle = *session;
+                *session = getSessionHandle(&mdrv2Dir[agentIndex]);
+                mdrv2Dir[agentIndex].dir[index].lockHandle = *session;
                 ret = true;
             }
             break;
@@ -978,7 +1072,7 @@ bool MDRV2::smbiosTryLock(uint8_t flag, uint8_t index, uint16_t* session,
 
 void MDRV2::timeoutHandler()
 {
-    smbiosUnlock(lockIndex);
+    smbiosUnlock(currentAgentIndex, lockIndex);
     mdrv2->area.reset(nullptr);
 }
 
@@ -1016,29 +1110,71 @@ ipmi::RspType<uint8_t,  // mdr2Version
         return ipmi::responseParmOutOfRange();
     }
 
-    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
-
-    int idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
-
-    if ((idIndex < 0) || (idIndex >= maxDirEntries))
+    int idIndex = 0;
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Invalid Data ID", phosphor::logging::entry("IDINDEX=%x", idIndex));
-        return ipmi::responseParmOutOfRange();
+        std::vector<uint8_t> arrayDataInfo;
+        arrayDataInfo.resize(dataInfo.size());
+        std::copy(dataInfo.data(), dataInfo.data() + dataInfo.size(),
+                  arrayDataInfo.data());
+        int index = 0;
+        for (; index < mdrv2->mdrv2Dir[agentIndex].dirEntries; index++)
+        {
+            size_t info = 0;
+            for (; info < arrayDataInfo.size(); info++)
+            {
+                if (arrayDataInfo[info] != mdrv2->mdrv2Dir[agentIndex]
+                                               .dir[index]
+                                               .common.id.dataInfo[info])
+                {
+                    break;
+                }
+            }
+            if (info == arrayDataInfo.size())
+            {
+                idIndex = index;
+                break;
+            }
+        }
+        if ((static_cast<int>(mdrv2->mdrv2Dir[agentIndex].dirEntries) == index))
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Invalid Data ID",
+                phosphor::logging::entry("IDINDEX=%x", idIndex));
+            return ipmi::responseParmOutOfRange();
+        }
+    }
+    else
+    {
+        std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+        std::string service =
+            ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                             mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+
+        idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
+
+        if ((idIndex < 0) || (idIndex >= maxDirEntries))
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Invalid Data ID",
+                phosphor::logging::entry("IDINDEX=%x", idIndex));
+            return ipmi::responseParmOutOfRange();
+        }
     }
 
     uint16_t session = 0;
-    if (!mdrv2->smbiosTryLock(0, idIndex, &session, timeout))
+    if (!mdrv2->smbiosTryLock(agentIndex, 0, idIndex, &session, timeout))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Lock Data failed - cannot lock idIndex");
         return ipmi::responseCommandNotAvailable();
     }
 
-    uint32_t dataLength = mdrv2->smbiosDir.dir[idIndex].common.size;
-    uint32_t xferAddress = mdrv2->smbiosDir.dir[idIndex].xferBuff;
-    uint32_t xferLength = mdrv2->smbiosDir.dir[idIndex].xferSize;
+    uint32_t dataLength = mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size;
+    uint32_t xferAddress = mdrv2->mdrv2Dir[agentIndex].dir[idIndex].xferBuff;
+    uint32_t xferLength = mdrv2->mdrv2Dir[agentIndex].dir[idIndex].xferSize;
 
     return ipmi::responseSuccess(mdr2Version, session, dataLength, xferAddress,
                                  xferLength);
@@ -1067,7 +1203,7 @@ ipmi::RspType<> mdr2UnlockData(uint16_t agentId, uint16_t lockHandle)
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findLockHandle(lockHandle);
+    int idIndex = mdrv2->findLockHandle(agentIndex, lockHandle);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
     {
@@ -1076,7 +1212,7 @@ ipmi::RspType<> mdr2UnlockData(uint16_t agentId, uint16_t lockHandle)
         return ipmi::responseParmOutOfRange();
     }
 
-    if (!mdrv2->smbiosUnlock(idIndex))
+    if (!mdrv2->smbiosUnlock(agentIndex, idIndex))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Unlock Data failed - cannot unlock idIndex");
@@ -1099,6 +1235,7 @@ ipmi::RspType<uint8_t, uint16_t>
                         uint32_t xferLength, uint16_t timeout)
 {
     uint16_t session = 0;
+    std::string service;
 
     if (dataLength > smbiosTableStorageSize)
     {
@@ -1114,7 +1251,6 @@ ipmi::RspType<uint8_t, uint16_t>
     }
 
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
 
     if (mdrv2 == nullptr)
     {
@@ -1129,16 +1265,66 @@ ipmi::RspType<uint8_t, uint16_t>
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
-
-    if ((idIndex < 0) || (idIndex >= maxDirEntries))
+    int idIndex = 0;
+    if (mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+        mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Invalid Data ID", phosphor::logging::entry("IDINDEX=%x", idIndex));
-        return ipmi::responseParmOutOfRange();
+        std::filesystem::path filepath(mdrv2->mdrv2Dir[agentIndex].fileName);
+        if (std::filesystem::exists(filepath))
+        {
+            std::cout << "removing file -" << filepath.c_str() << std::endl;
+            std::filesystem::remove_all(filepath);
+        }
+        std::vector<uint8_t> arrayDataInfo;
+        arrayDataInfo.resize(dataInfo.size());
+        std::copy(dataInfo.data(), dataInfo.data() + dataInfo.size(),
+                  arrayDataInfo.data());
+        int index = 0;
+        for (; index < mdrv2->mdrv2Dir[agentIndex].dirEntries; index++)
+        {
+            size_t info = 0;
+            for (; info < arrayDataInfo.size(); info++)
+            {
+                if (arrayDataInfo[info] != mdrv2->mdrv2Dir[agentIndex]
+                                               .dir[index]
+                                               .common.id.dataInfo[info])
+                {
+                    break;
+                }
+            }
+            if (info == arrayDataInfo.size())
+            {
+                idIndex = index;
+                break;
+            }
+        }
+        if (static_cast<int>(mdrv2->mdrv2Dir[agentIndex].dirEntries) == index)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Invalid1 Data ID",
+                phosphor::logging::entry("IDINDEX=%x", idIndex));
+            return ipmi::responseParmOutOfRange();
+        }
+    }
+    else
+    {
+        std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+        service = ipmi::getService(*bus,
+                                   mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                                   mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+        idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
+
+        if ((idIndex < 0) || (idIndex >= maxDirEntries))
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Invalid Data ID",
+                phosphor::logging::entry("IDINDEX=%x", idIndex));
+            return ipmi::responseParmOutOfRange();
+        }
     }
 
-    if (mdrv2->smbiosTryLock(1, idIndex, &session, timeout))
+    if (mdrv2->smbiosTryLock(agentIndex, 1, idIndex, &session, timeout))
     {
         try
         {
@@ -1147,21 +1333,27 @@ ipmi::RspType<uint8_t, uint16_t>
         }
         catch (const std::system_error& e)
         {
-            mdrv2->smbiosUnlock(idIndex);
+            mdrv2->smbiosUnlock(agentIndex, idIndex);
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "Unable to access share memory",
                 phosphor::logging::entry("ERROR=%s", e.what()));
             return ipmi::responseUnspecifiedError();
         }
-        mdrv2->smbiosDir.dir[idIndex].common.size = dataLength;
-        mdrv2->smbiosDir.dir[idIndex].lockHandle = session;
-        if (-1 ==
-            mdrv2->syncDirCommonData(
-                idIndex, mdrv2->smbiosDir.dir[idIndex].common.size, service))
+        mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size = dataLength;
+        mdrv2->mdrv2Dir[agentIndex].dir[idIndex].lockHandle = session;
+        if (!(mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+              mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+              mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr))
         {
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "Unable to sync data to service");
-            return ipmi::responseResponseError();
+            if (-1 == mdrv2->syncDirCommonData(
+                          agentIndex, idIndex,
+                          mdrv2->mdrv2Dir[agentIndex].dir[idIndex].common.size,
+                          service))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Unable to sync data to service");
+                return ipmi::responseResponseError();
+            }
         }
     }
     else
@@ -1198,7 +1390,7 @@ ipmi::RspType<> cmd_mdr2_data_done(uint16_t agentId, uint16_t lockHandle)
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findLockHandle(lockHandle);
+    int idIndex = mdrv2->findLockHandle(agentIndex,lockHandle);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
     {
@@ -1207,7 +1399,7 @@ ipmi::RspType<> cmd_mdr2_data_done(uint16_t agentId, uint16_t lockHandle)
         return ipmi::responseParmOutOfRange();
     }
 
-    if (!mdrv2->smbiosUnlock(idIndex))
+    if (!mdrv2->smbiosUnlock(agentIndex, idIndex))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "Send data done failed - cannot unlock idIndex");
@@ -1217,52 +1409,70 @@ ipmi::RspType<> cmd_mdr2_data_done(uint16_t agentId, uint16_t lockHandle)
     mdrv2->area.reset(nullptr);
     MDRSMBIOSHeader mdr2Smbios;
     mdr2Smbios.mdrType = mdrTypeII;
-    mdr2Smbios.dirVer = mdrv2->smbiosDir.dir[0].common.dataVersion;
-    mdr2Smbios.timestamp = mdrv2->smbiosDir.dir[0].common.timestamp;
-    mdr2Smbios.dataSize = mdrv2->smbiosDir.dir[0].common.size;
+    mdr2Smbios.dirVer = mdrv2->mdrv2Dir[agentIndex].dir[0].common.dataVersion;
+    mdr2Smbios.timestamp = mdrv2->mdrv2Dir[agentIndex].dir[0].common.timestamp;
+    mdr2Smbios.dataSize = mdrv2->mdrv2Dir[agentIndex].dir[0].common.size;
 
-    if (access(smbiosPath, 0) == -1)
+    if (access(reinterpret_cast<char*>(mdrv2->mdrv2Dir[agentIndex].datadirPath),
+               0) == -1)
     {
-        int flag = mkdir(smbiosPath, S_IRWXU);
-        if (flag != 0)
+        // create the crashdump/output directory if it doesn't exist
+        std::error_code ec;
+        std::filesystem::path dumpDir = mdrv2->mdrv2Dir[agentIndex].datadirPath;
+        if (!(std::filesystem::create_directories(dumpDir, ec)))
         {
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "create folder failed for writting smbios file");
+            if (ec.value() != 0)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "failed to create folder",
+                    phosphor::logging::entry("crashdumpDir=%s",
+                                             dumpDir.c_str()));
+            }
         }
     }
     if (!mdrv2->storeDatatoFlash(
-            &mdr2Smbios, mdrv2->smbiosDir.dir[smbiosDirIndex].dataStorage))
+            agentIndex, &mdr2Smbios,
+            mdrv2->mdrv2Dir[agentIndex].dir[mdrv2DirIndex].dataStorage))
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "MDR2 Store data to flash failed");
         return ipmi::responseDestinationUnavailable();
     }
     bool status = false;
-    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    std::string service = ipmi::getService(*bus, mdrv2Interface, mdrv2Path);
-    sdbusplus::message_t method = bus->new_method_call(
-        service.c_str(), mdrv2Path, mdrv2Interface, "AgentSynchronizeData");
+    if (!(mdrv2->mdrv2Dir[agentIndex].overrideFlag ||
+          mdrv2->mdrv2Dir[agentIndex].mdrv2Interface == nullptr ||
+          mdrv2->mdrv2Dir[agentIndex].mdrv2Path == nullptr))
+    {
+        std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+        std::string service =
+            ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                             mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+        sdbusplus::message_t method = bus->new_method_call(
+            service.c_str(), mdrv2->mdrv2Dir[agentIndex].mdrv2Path,
+            mdrv2->mdrv2Dir[agentIndex].mdrv2Interface, "AgentSynchronizeData");
 
-    try
-    {
-        sdbusplus::message_t reply = bus->call(method);
-        reply.read(status);
-    }
-    catch (const sdbusplus::exception_t& e)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Error Sync data with service",
-            phosphor::logging::entry("ERROR=%s", e.what()),
-            phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", mdrv2Path));
-        return ipmi::responseResponseError();
-    }
+        try
+        {
+            sdbusplus::message_t reply = bus->call(method);
+            reply.read(status);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error Sync data with service",
+                phosphor::logging::entry("ERROR=%s", e.what()),
+                phosphor::logging::entry("SERVICE=%s", service.c_str()),
+                phosphor::logging::entry(
+                    "PATH=%s", mdrv2->mdrv2Dir[agentIndex].mdrv2Path));
+            return ipmi::responseResponseError();
+        }
 
-    if (!status)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Sync data with service failure");
-        return ipmi::responseUnspecifiedError();
+        if (!status)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Sync data with service failure");
+            return ipmi::responseUnspecifiedError();
+        }
     }
 
     return ipmi::responseSuccess();
