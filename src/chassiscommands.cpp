@@ -677,10 +677,12 @@ static void registerChassisFunctions(void)
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnChassis,
                           ipmi::chassis::cmdChassisIdentify,
                           ipmi::Privilege::Operator, ipmiChassisIdentify);
+#ifdef IF_NON_INTEL_DISABLE
     // <Get Chassis Status>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnChassis,
                           ipmi::chassis::cmdGetChassisStatus,
                           ipmi::Privilege::User, ipmiGetChassisStatus);
+#endif
     // <Get System Restart Cause>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnChassis,
                           ipmi::chassis::cmdGetSystemRestartCause,
