@@ -127,12 +127,19 @@ static constexpr Cmd cmdPFRMailboxRead = 0x84;
 
 } // namespace intel
 
+namespace ami
+{
+static constexpr NetFn netFnGeneral = netFnOemTwo;
+
 namespace general
 {
 static constexpr Cmd cmdOEMSetFirewallConfiguration = 0x76;
 static constexpr Cmd cmdOEMGetFirewallConfiguration = 0x77;
 static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
 static constexpr Cmd cmdOEMSetSELPolicy = 0x7F;
+static constexpr Cmd cmdOEMGetKCSStatus = 0x3E;
+static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
+static constexpr Cmd cmdOEMCancelTask = 0xB1;
 
 namespace network
 {
@@ -172,22 +179,6 @@ enum class GetFirewallOEMParam : uint16_t
     PARAM_IPV6_RULE,
 };
 } // namespace network
-} // namespace general
-} // namespace ami
-
-namespace ami
-{
-static constexpr NetFn netFnGeneral = netFnOemTwo;
-
-namespace general
-{
-
-static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
-static constexpr Cmd cmdOEMSetSELPolicy = 0x7F;
-static constexpr Cmd cmdOEMGetKCSStatus = 0x3E;
-static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
-static constexpr Cmd cmdOEMCancelTask = 0xB1;
-
 } // namespace general
 } // namespace ami
 } // namespace ipmi
