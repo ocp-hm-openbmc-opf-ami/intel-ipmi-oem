@@ -18,10 +18,21 @@
 #include "xyz/openbmc_project/Common/error.hpp"
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
 
+#include <bits/stdc++.h>
+#include <fcntl.h>
+#include <linux/i2c-dev.h>
+#include <linux/i2c.h>
+#include <netinet/ether.h>
 #include <openssl/crypto.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <security/pam_appl.h>
+#include <sys/ioctl.h>
 #include <systemd/sd-journal.h>
+#include <unistd.h>
 
 #include <appcommands.hpp>
+#include <boost/algorithm/string.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/process/child.hpp>
 #include <boost/process/io.hpp>
@@ -42,26 +53,86 @@
 #include <xyz/openbmc_project/Control/Security/RestrictionMode/server.hpp>
 #include <xyz/openbmc_project/Control/Security/SpecialMode/server.hpp>
 #include <xyz/openbmc_project/Network/FirewallConfiguration/server.hpp>
+#include <xyz/openbmc_project/Software/Activation/server.hpp>
+#include <xyz/openbmc_project/Software/Version/server.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <regex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <variant>
 #include <vector>
-#include <netinet/ether.h>
-#include <cstring>
 
 namespace ipmi
 {
+// IPMI OEM USB Linux Gadget info
+static constexpr uint16_t USB_VENDOR_ID = 0x0525;
+static constexpr uint16_t USB_PRODUCT_ID = 0xA4A2;
+static constexpr uint8_t USB_SERIAL_NUM = 0x00;
+
+// Network object in dbus
+static constexpr auto networkServiceName = "xyz.openbmc_project.Network";
+static constexpr auto networkConfigObj = "/xyz/openbmc_project/network/config";
+static constexpr auto networkConfigIntf =
+    "xyz.openbmc_project.Network.SystemConfiguration";
+
+// IPMI channel info
+// static constexpr uint8_t maxIpmiChannels = 16;
+static constexpr const char* channelConfigDefaultFilename =
+    "/usr/share/ipmi-providers/channel_config.json";
+
+// STRING DEFINES: Should sync with key's in JSON
+static constexpr const char* nameString = "name";
+static constexpr const char* isValidString = "is_valid";
+static constexpr const char* channelInfoString = "channel_info";
+static constexpr const char* mediumTypeString = "medium_type";
+static constexpr const char* protocolTypeString = "protocol_type";
+static constexpr const char* sessionSupportedString = "session_supported";
+static constexpr const char* isIpmiString = "is_ipmi";
+static constexpr const char* redfishHostInterfaceChannel = "usb0";
+
+// User Manager object in dbus
+static constexpr const char* userMgrObjBasePath = "/xyz/openbmc_project/user";
+static constexpr const char* userMgrInterface =
+    "xyz.openbmc_project.User.Manager";
+static constexpr const char* usersInterface =
+    "xyz.openbmc_project.User.Attributes";
+static constexpr const char* usersDeleteIface =
+    "xyz.openbmc_project.Object.Delete";
+static constexpr const char* createUserMethod = "CreateUser";
+static constexpr const char* deleteUserMethod = "Delete";
+
+// BIOSConfig Manager object in dbus
+static constexpr const char* biosConfigMgrPath =
+    "/xyz/openbmc_project/bios_config/manager";
+static constexpr const char* biosConfigMgrIface =
+    "xyz.openbmc_project.BIOSConfig.Manager";
+
+using GetSubTreePathsType = std::vector<std::string>;
+
+using namespace phosphor::logging;
+
+// Cert Paths
+std::string defaultCertPath = "/etc/ssl/certs/https/server.pem";
+
+static constexpr const char* persistentDataFilePath =
+    "/home/root/bmcweb_persistent_data.json";
+
 constexpr size_t ipmbMaxDataSize = 256;
 static void registerOEMFunctions() __attribute__((constructor));
 
 static constexpr size_t maxFRUStringLength = 0x3F;
+
+// HI Certificate FingerPrint error code
+static constexpr Cc ipmiCCBootStrappingDisabled = 0x80;
 static constexpr Cc ipmiCCCertificateNumberInvalid = 0xCB;
+
 static constexpr Cc ipmiCCFileSelectorOrOffsetAndLengthOutOfRange = 0xC9;
 static constexpr Cc ipmiCCNoCertGenerated = 0x83;
 
@@ -87,7 +158,8 @@ const static constexpr char* systemDService = "org.freedesktop.systemd1";
 const static constexpr char* systemDObjPath = "/org/freedesktop/systemd1";
 const static constexpr char* systemDMgrIntf =
     "org.freedesktop.systemd1.Manager";
-const static constexpr char* ipmiKcsService = "phosphor-ipmi-kcs@ipmi_kcs3.service";
+const static constexpr char* ipmiKcsService =
+    "phosphor-ipmi-kcs@ipmi_kcs3.service";
 constexpr auto systemDInterfaceUnit = "org.freedesktop.DBus.Properties";
 constexpr auto activeState = "active";
 constexpr auto activatingState = "activating";
@@ -3926,8 +3998,8 @@ ipmi::RspType<uint8_t, uint8_t> ipmiOEMGetBufferSize()
 bool getsmtpconfig(sdbusplus::bus::bus& bus,
                    std::tuple<bool, std::string, uint16_t, std::string>& cfg)
 {
-    auto call =
-        bus.new_method_call(smtpclient, smtpObj, smtpIntf, "GetSmtpConfig");
+    auto call = bus.new_method_call(smtpclient, smtpObj, smtpIntf,
+                                    "GetSmtpConfig");
     try
     {
         auto data = bus.call(call);
@@ -3948,8 +4020,8 @@ bool setrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string> rec)
 
     try
     {
-        auto method =
-            bus.new_method_call(pefBus, pefObj, dBusPropertyIntf, "Set");
+        auto method = bus.new_method_call(pefBus, pefObj, dBusPropertyIntf,
+                                          "Set");
         method.append(pefConfInfoIntf, "Recipient", variantVectorValue);
 
         auto reply = bus.call(method);
@@ -3965,25 +4037,27 @@ bool setrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string> rec)
 bool getrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string>& rec)
 {
     boost::container::flat_map<
-        std::string,std::variant<std::string, uint64_t, std::vector<std::string>>>resp;
+        std::string,
+        std::variant<std::string, uint64_t, std::vector<std::string>>>
+        resp;
     try
     {
-            auto method =bus.new_method_call(pefBus, pefObj, dBusPropertyIntf, "GetAll");
-            method.append(pefConfInfoIntf);
-            auto reply = bus.call(method);
-            reply.read(resp);
+        auto method = bus.new_method_call(pefBus, pefObj, dBusPropertyIntf,
+                                          "GetAll");
+        method.append(pefConfInfoIntf);
+        auto reply = bus.call(method);
+        reply.read(resp);
     }
     catch (const sdbusplus::exception_t&)
     {
-        std::cerr << "error getting Recipent  from "<<pefBus
-                  << "\n";
+        std::cerr << "error getting Recipent  from " << pefBus << "\n";
         return false;
     }
 
     auto getRecipient = resp.find("Recipient");
     if (getRecipient == resp.end())
     {
-            return false;
+        return false;
     }
     rec = std::get<std::vector<std::string>>(getRecipient->second);
     return true;
@@ -3994,10 +4068,10 @@ bool setsmtpconfig(sdbusplus::bus::bus& bus, bool enable, std::string host,
 {
     try
     {
-    auto call =
-        bus.new_method_call(smtpclient, smtpObj, smtpIntf, "SetSmtpConfig");
+        auto call = bus.new_method_call(smtpclient, smtpObj, smtpIntf,
+                                        "SetSmtpConfig");
 
-    call.append(enable, host, port, send);
+        call.append(enable, host, port, send);
         auto data = bus.call(call);
     }
     catch (sdbusplus::exception_t& e)
@@ -4014,10 +4088,9 @@ bool emailIdCheck(std::string email)
     return std::regex_match(email, pattern);
 }
 
-ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t parameter,
-                                     message::Payload& req)
+ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
+                                     uint8_t parameter, message::Payload& req)
 {
-
     std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
     std::vector<std::string> rec;
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
@@ -4146,9 +4219,9 @@ std::vector<uint8_t> convertToBytes(std::string data)
     return val;
 }
 
-ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
-                                                         uint8_t parameter,
-                                                         message::Payload& req)
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiOEMGetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
+                         uint8_t parameter, message::Payload& req)
 {
     std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
     std::vector<std::string> rec;
@@ -4165,7 +4238,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetSmtpConfig([[maybe_unused]] ipmi::
     {
         std::array<uint8_t, 0> bytes;
         if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
-       {
+        {
             return responseReqDataLenInvalid();
         }
     }
@@ -4343,10 +4416,14 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 }
 
-ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t parameter, message::Payload& req) {
+ipmi::RspType<message::Payload>
+    ipmiOEMSetFirewallConfiguration(uint8_t parameter, message::Payload& req)
+{
     message::Payload ret;
-    using FirewallIface = sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
-    static struct FirewallProperties {
+    using FirewallIface =
+        sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
+    static struct FirewallProperties
+    {
         std::string target;
         uint8_t control;
         std::string protocol;
@@ -4364,13 +4441,19 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
         case ami::general::network::SetFirewallOEMParam::PARAM_TARGET:
         {
             uint8_t target;
-            if (req.unpack(target) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(target) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             }
 
-            try {
-                properties.target = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::Target>(target));
-            } catch (const std::exception& e) {
+            try
+            {
+                properties.target = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(
+                        static_cast<FirewallIface::Target>(target));
+            }
+            catch (const std::exception& e)
+            {
                 return ipmi::responseInvalidFieldRequest();
             }
 
@@ -4379,21 +4462,30 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
         case ami::general::network::SetFirewallOEMParam::PARAM_PROTOCOL:
         {
             uint8_t protocol;
-            if (req.unpack(protocol) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(protocol) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             }
 
-            try {
-                properties.protocol = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::Protocol>(protocol));
-            } catch (const std::exception& e) {
+            try
+            {
+                properties.protocol = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(
+                        static_cast<FirewallIface::Protocol>(protocol));
+            }
+            catch (const std::exception& e)
+            {
                 return ipmi::responseInvalidFieldRequest();
             }
-            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL);
+            properties.control |= static_cast<uint8_t>(
+                ami::general::network::FirewallFlags::PROTOCOL);
 
             return ipmi::responseSuccess();
         }
-        case ami::general::network::SetFirewallOEMParam::PARAM_START_SOURCE_IP_ADDR:
-        case ami::general::network::SetFirewallOEMParam::PARAM_END_SOURCE_IP_ADDR:
+        case ami::general::network::SetFirewallOEMParam::
+            PARAM_START_SOURCE_IP_ADDR:
+        case ami::general::network::SetFirewallOEMParam::
+            PARAM_END_SOURCE_IP_ADDR:
         {
             std::variant<in_addr, in6_addr> ipAddr;
             std::array<uint8_t, sizeof(in_addr)> ipv4Bytes;
@@ -4401,59 +4493,82 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
             char tmp[128];
             bool isIPv4 = true;
             memset(tmp, 0, sizeof(tmp));
-            try {
-                if (req.size() - req.rawIndex == sizeof(in_addr)) {
-                    if (req.unpack(ipv4Bytes) != 0 || !req.fullyUnpacked()) {
+            try
+            {
+                if (req.size() - req.rawIndex == sizeof(in_addr))
+                {
+                    if (req.unpack(ipv4Bytes) != 0 || !req.fullyUnpacked())
+                    {
                         return responseReqDataLenInvalid();
                     } // if
                     in_addr addr;
                     std::memcpy(&addr, ipv4Bytes.data(), ipv4Bytes.size());
-                    if (!inet_ntop(AF_INET, &addr, tmp, sizeof(tmp))) {
+                    if (!inet_ntop(AF_INET, &addr, tmp, sizeof(tmp)))
+                    {
                         return responseInvalidFieldRequest();
                     } // if
                     isIPv4 = true;
-                    ipAddr =std::move(addr);
+                    ipAddr = std::move(addr);
                 } // if
-                else if (req.size() - req.rawIndex  == sizeof(in6_addr)) {
-                    if (req.unpack(ipv6Bytes) != 0 || !req.fullyUnpacked()) {
+                else if (req.size() - req.rawIndex == sizeof(in6_addr))
+                {
+                    if (req.unpack(ipv6Bytes) != 0 || !req.fullyUnpacked())
+                    {
                         return responseReqDataLenInvalid();
                     } // if
                     in6_addr addr;
                     std::memcpy(&addr, ipv6Bytes.data(), ipv6Bytes.size());
-                    if (!inet_ntop(AF_INET6, &addr, tmp, sizeof(tmp))) {
+                    if (!inet_ntop(AF_INET6, &addr, tmp, sizeof(tmp)))
+                    {
                         return responseInvalidFieldRequest();
                     } // if
                     isIPv4 = false;
-                    ipAddr =std::move(addr);
+                    ipAddr = std::move(addr);
                 } // else if
-                else {
+                else
+                {
                     req.trailingOk = true;
                     return responseReqDataLenInvalid();
                 }
-            } catch (const std::exception& e) {
+            }
+            catch (const std::exception& e)
+            {
                 return ipmi::responseResponseError();
             }
 
-            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_SOURCE_IP_ADDR) {
-                if (!properties.endIPAddr.empty()) {
-                    if ((isIPv4 && properties.endIPAddr.find(":") == std::string::npos)
-                        || (!isIPv4 && properties.endIPAddr.find(":") != std::string::npos) ) {
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(
+                    parameter) == ami::general::network::SetFirewallOEMParam::
+                                      PARAM_START_SOURCE_IP_ADDR)
+            {
+                if (!properties.endIPAddr.empty())
+                {
+                    if ((isIPv4 &&
+                         properties.endIPAddr.find(":") == std::string::npos) ||
+                        (!isIPv4 &&
+                         properties.endIPAddr.find(":") != std::string::npos))
+                    {
                         return responseInvalidFieldRequest();
                     }
                 }
                 properties.startIPAddr = tmp;
             }
-            else {
-                if (!properties.endIPAddr.empty()) {
-                    if ((isIPv4 && properties.endIPAddr.find(":") == std::string::npos)
-                        || (!isIPv4 && properties.endIPAddr.find(":") != std::string::npos) ) {
+            else
+            {
+                if (!properties.endIPAddr.empty())
+                {
+                    if ((isIPv4 &&
+                         properties.endIPAddr.find(":") == std::string::npos) ||
+                        (!isIPv4 &&
+                         properties.endIPAddr.find(":") != std::string::npos))
+                    {
                         return responseInvalidFieldRequest();
                     }
                 }
                 properties.endIPAddr = tmp;
             }
 
-            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::IP);
+            properties.control |=
+                static_cast<uint8_t>(ami::general::network::FirewallFlags::IP);
             return ipmi::responseSuccess();
         }
         case ami::general::network::SetFirewallOEMParam::PARAM_START_PORT:
@@ -4461,30 +4576,36 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
         {
             uint16_t port;
             std::array<uint8_t, sizeof(uint16_t)> portBytes;
-            if (req.unpack(portBytes) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(portBytes) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             } // if
 
             std::memcpy(&port, portBytes.data(), portBytes.size());
-            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_PORT)
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(
+                    parameter) ==
+                ami::general::network::SetFirewallOEMParam::PARAM_START_PORT)
                 properties.startPort = ntohs(port);
             else
                 properties.endPort = ntohs(port);
-            
-            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PORT);
+
+            properties.control |= static_cast<uint8_t>(
+                ami::general::network::FirewallFlags::PORT);
             return ipmi::responseSuccess();
         }
         case ami::general::network::SetFirewallOEMParam::PARAM_SOURCE_MAC_ADDR:
         {
             std::array<uint8_t, sizeof(ether_addr)> macBytes;
             ether_addr mac;
-            if (req.unpack(macBytes) != 0 || !req.fullyUnpacked()) {
-                    return responseReqDataLenInvalid();
+            if (req.unpack(macBytes) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
             } // if
 
             std::memcpy(&mac, macBytes.data(), macBytes.size());
             properties.macAddr = ether_ntoa(&mac);
-            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::MAC);
+            properties.control |=
+                static_cast<uint8_t>(ami::general::network::FirewallFlags::MAC);
             return ipmi::responseSuccess();
         }
         case ami::general::network::SetFirewallOEMParam::PARAM_START_TIME:
@@ -4495,71 +4616,109 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
             std::array<uint8_t, sizeof(uint16_t)> yearBytes;
             char tmp[128];
             memset(tmp, 0, sizeof(tmp));
-            if (req.unpack(yearBytes, month, date, hour, min, sec) != 0 || !req.fullyUnpacked()) {
-                    return responseReqDataLenInvalid();
+            if (req.unpack(yearBytes, month, date, hour, min, sec) != 0 ||
+                !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
             } // if
 
             std::memcpy(&year, yearBytes.data(), yearBytes.size());
             memset(tmp, 0, sizeof(tmp));
-            snprintf(tmp, sizeof(tmp), "%04d-%02d-%02dT%02d:%02d:%02d", ntohs(year), month, date, hour, min, sec);
-            if (static_cast<ami::general::network::SetFirewallOEMParam>(parameter) == ami::general::network::SetFirewallOEMParam::PARAM_START_TIME)
+            snprintf(tmp, sizeof(tmp), "%04d-%02d-%02dT%02d:%02d:%02d",
+                     ntohs(year), month, date, hour, min, sec);
+            if (static_cast<ami::general::network::SetFirewallOEMParam>(
+                    parameter) ==
+                ami::general::network::SetFirewallOEMParam::PARAM_START_TIME)
                 properties.startTime = tmp;
             else
                 properties.endTime = tmp;
-            properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::TIMEOUT);
+            properties.control |= static_cast<uint8_t>(
+                ami::general::network::FirewallFlags::TIMEOUT);
             return ipmi::responseSuccess();
         }
         case ami::general::network::SetFirewallOEMParam::PARAM_APPLY:
         {
             int16_t retValue;
             uint8_t action;
-            if (req.unpack(action) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(action) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             } // if
 
-            if ((properties.control & static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL)) == 0) {
-                try {
-                    properties.protocol = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::Protocol::UNSPECIFIED);
-                } catch (const std::exception& e) {
+            if ((properties.control &
+                 static_cast<uint8_t>(
+                     ami::general::network::FirewallFlags::PROTOCOL)) == 0)
+            {
+                try
+                {
+                    properties.protocol = sdbusplus::xyz::openbmc_project::
+                        Network::server::convertForMessage(
+                            FirewallIface::Protocol::UNSPECIFIED);
+                }
+                catch (const std::exception& e)
+                {
                     return ipmi::responseInvalidFieldRequest();
                 }
             }
 
-            if (action == 0b01) {
-                auto method = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "AddRule");
-                method.append(properties.target, properties.control, properties.protocol, properties.startIPAddr, properties.endIPAddr,
-                           properties.startPort, properties.endPort, properties.macAddr, properties.startTime, properties.endTime);
-                try {
+            if (action == 0b01)
+            {
+                auto method = dbus->new_method_call(
+                    ami::general::network::phosphorNetworkService,
+                    ami::general::network::firewallConfigurationObj,
+                    ami::general::network::firewallConfigurationIntf,
+                    "AddRule");
+                method.append(properties.target, properties.control,
+                              properties.protocol, properties.startIPAddr,
+                              properties.endIPAddr, properties.startPort,
+                              properties.endPort, properties.macAddr,
+                              properties.startTime, properties.endTime);
+                try
+                {
                     auto reply = dbus->call(method);
                     reply.read(retValue);
                     properties = {};
-                    if (retValue==0)
+                    if (retValue == 0)
                         return ipmi::responseSuccess();
                     else
                         return ipmi::responseResponseError();
-                } catch (const sdbusplus::exception_t& e) {
+                }
+                catch (const sdbusplus::exception_t& e)
+                {
                     properties = {};
                     return ipmi::responseResponseError();
                 }
             } // if
-            else if (action == 0x00) {
-                auto method = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "DelRule");
-                method.append(properties.target, properties.control, properties.protocol, properties.startIPAddr, properties.endIPAddr,
-                           properties.startPort, properties.endPort, properties.macAddr, properties.startTime, properties.endTime);
-                try {
+            else if (action == 0x00)
+            {
+                auto method = dbus->new_method_call(
+                    ami::general::network::phosphorNetworkService,
+                    ami::general::network::firewallConfigurationObj,
+                    ami::general::network::firewallConfigurationIntf,
+                    "DelRule");
+                method.append(properties.target, properties.control,
+                              properties.protocol, properties.startIPAddr,
+                              properties.endIPAddr, properties.startPort,
+                              properties.endPort, properties.macAddr,
+                              properties.startTime, properties.endTime);
+                try
+                {
                     auto reply = dbus->call(method);
                     reply.read(retValue);
                     properties = {};
-                    if (retValue==0)
+                    if (retValue == 0)
                         return ipmi::responseSuccess();
                     else
                         return ipmi::responseResponseError();
-                } catch (const sdbusplus::exception_t& e) {
+                }
+                catch (const sdbusplus::exception_t& e)
+                {
                     properties = {};
                     return ipmi::responseResponseError();
                 }
             } // else if
-            else {
+            else
+            {
                 properties = {};
                 return ipmi::responseInvalidFieldRequest();
             }
@@ -4569,14 +4728,23 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
         case ami::general::network::SetFirewallOEMParam::PARAM_FLUSH:
         {
             uint8_t ipType;
-            if (req.unpack(ipType) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(ipType) != 0 || !req.fullyUnpacked())
+            {
                 return responseInvalidFieldRequest();
             }
-            
-            auto request = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj, ami::general::network::firewallConfigurationIntf, "FlushAll");
-            try {
-                request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::IP>(ipType)));
-            } catch (const std::exception& e) {
+
+            auto request = dbus->new_method_call(
+                ami::general::network::phosphorNetworkService,
+                ami::general::network::firewallConfigurationObj,
+                ami::general::network::firewallConfigurationIntf, "FlushAll");
+            try
+            {
+                request.append(sdbusplus::xyz::openbmc_project::Network::
+                                   server::convertForMessage(
+                                       static_cast<FirewallIface::IP>(ipType)));
+            }
+            catch (const std::exception& e)
+            {
                 return ipmi::responseInvalidFieldRequest();
             }
             dbus->call_noreply(request);
@@ -4591,12 +4759,19 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(uint8_t paramete
     return ipmi::responseUnspecifiedError();
 }
 
-ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t parameter, message::Payload& req) {
-    using FirewallIface = sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
-    using FirewallTuples = std::tuple<bool, std::string, uint8_t, std::string, std::string, std::string, uint16_t, uint16_t, std::string, std::string, std::string>;
+ipmi::RspType<message::Payload>
+    ipmiOEMGetFirewallConfiguration(uint8_t parameter, message::Payload& req)
+{
+    using FirewallIface =
+        sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
+    using FirewallTuples =
+        std::tuple<bool, std::string, uint8_t, std::string, std::string,
+                   std::string, uint16_t, uint16_t, std::string, std::string,
+                   std::string>;
     std::vector<FirewallTuples> tupleList;
     message::Payload payload;
-    struct firewall_t {
+    struct firewall_t
+    {
         uint8_t target;
         uint8_t control;
         uint8_t protocol;
@@ -4618,31 +4793,41 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
     } ret;
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
 
-    auto request = dbus->new_method_call(ami::general::network::phosphorNetworkService, ami::general::network::firewallConfigurationObj,
-                                        ami::general::network::firewallConfigurationIntf, "GetRules");
+    auto request = dbus->new_method_call(
+        ami::general::network::phosphorNetworkService,
+        ami::general::network::firewallConfigurationObj,
+        ami::general::network::firewallConfigurationIntf, "GetRules");
 
     switch (static_cast<ami::general::network::GetFirewallOEMParam>(parameter))
     {
         case ami::general::network::GetFirewallOEMParam::PARAM_RULE_NUMBER:
         {
             uint8_t ipType;
-            if (req.unpack(ipType) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(ipType) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             }
 
-            try {
-                request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(static_cast<FirewallIface::IP>(ipType)));
+            try
+            {
+                request.append(sdbusplus::xyz::openbmc_project::Network::
+                                   server::convertForMessage(
+                                       static_cast<FirewallIface::IP>(ipType)));
                 auto resp = dbus->call(request);
                 resp.read(tupleList);
                 uint8_t num = 0;
-                for (auto it = tupleList.begin(); it != tupleList.end(); it++) {
-                    if (!(std::get<0>(*it))) {
+                for (auto it = tupleList.begin(); it != tupleList.end(); it++)
+                {
+                    if (!(std::get<0>(*it)))
+                    {
                         num++;
                     } // if
-                } // for
+                }     // for
 
                 payload.pack(num);
-            } catch (const std::exception& e1) {
+            }
+            catch (const std::exception& e1)
+            {
                 return responseInvalidFieldRequest();
             }
 
@@ -4652,54 +4837,79 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
         case ami::general::network::GetFirewallOEMParam::PARAM_IPV6_RULE:
         {
             uint8_t index;
-            if (req.unpack(index) != 0 || !req.fullyUnpacked()) {
+            if (req.unpack(index) != 0 || !req.fullyUnpacked())
+            {
                 return responseReqDataLenInvalid();
             }
 
-            try {
-                if (static_cast<ami::general::network::GetFirewallOEMParam>(parameter) == ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE) {
-                    request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::IP::IPV4));
+            try
+            {
+                if (static_cast<ami::general::network::GetFirewallOEMParam>(
+                        parameter) ==
+                    ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE)
+                {
+                    request.append(
+                        sdbusplus::xyz::openbmc_project::Network::server::
+                            convertForMessage(FirewallIface::IP::IPV4));
                 } // if
                 else
-                   request.append(sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::IP::IPV6));
-            } catch (const std::exception& e) {
+                    request.append(
+                        sdbusplus::xyz::openbmc_project::Network::server::
+                            convertForMessage(FirewallIface::IP::IPV6));
+            }
+            catch (const std::exception& e)
+            {
                 return responseInvalidFieldRequest();
             }
             auto resp = dbus->call(request);
             resp.read(tupleList);
-            if (tupleList.size() == 0) {
+            if (tupleList.size() == 0)
+            {
                 return ipmi::responseParmOutOfRange();
             } // if
-            else if (tupleList.size() <= index) {
+            else if (tupleList.size() <= index)
+            {
                 return ipmi::responseParmOutOfRange();
             }
             int i = 0;
-            for (auto it = tupleList.begin(); it != tupleList.end(); it++) {
-                if (std::get<0>(*it)) {
+            for (auto it = tupleList.begin(); it != tupleList.end(); it++)
+            {
+                if (std::get<0>(*it))
+                {
                     i++;
                 } // if
-            } // for
-        
-            auto [preload, target, control, protocol, startIPAddr, endIPAddr, startPort, endPort, macAddr, startTime, endTime] = tupleList.at(i+index);
+            }     // for
+
+            auto [preload, target, control, protocol, startIPAddr, endIPAddr,
+                  startPort, endPort, macAddr, startTime,
+                  endTime] = tupleList.at(i + index);
             memset(&ret, 0, sizeof(firewall_t));
-            try {
-                ret.target = static_cast<uint8_t>(FirewallIface::convertTargetFromString(target));
-                ret.protocol = static_cast<uint8_t>(FirewallIface::convertProtocolFromString(protocol));
-            } catch (const std::exception& e3) {
+            try
+            {
+                ret.target = static_cast<uint8_t>(
+                    FirewallIface::convertTargetFromString(target));
+                ret.protocol = static_cast<uint8_t>(
+                    FirewallIface::convertProtocolFromString(protocol));
+            }
+            catch (const std::exception& e3)
+            {
                 return ipmi::responseInvalidFieldRequest();
             }
 
             ret.control = control;
             ret.startPort = ntohs(startPort);
             ret.stopPort = ntohs(endPort);
-            if (!macAddr.empty()) {
+            if (!macAddr.empty())
+            {
                 ret.macAddr = *(ether_aton(macAddr.c_str()));
             } // if
 
             int tmps[6];
-            if (!startTime.empty()) {
+            if (!startTime.empty())
+            {
                 memset(tmps, 0, sizeof(tmps));
-                sscanf(startTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0], &tmps[1], &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
+                sscanf(startTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0],
+                       &tmps[1], &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
                 ret.startYear = ntohs(tmps[0]);
                 ret.startMonth = tmps[1];
                 ret.startDate = tmps[2];
@@ -4708,9 +4918,11 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
                 ret.startSec = tmps[5];
             } // if
 
-            if (!endTime.empty()) {
+            if (!endTime.empty())
+            {
                 memset(tmps, 0, sizeof(tmps));
-                sscanf(endTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0], &tmps[1], &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
+                sscanf(endTime.c_str(), "%d-%d-%dT%d:%d:%d", &tmps[0], &tmps[1],
+                       &tmps[2], &tmps[3], &tmps[4], &tmps[5]);
                 ret.stopYear = ntohs(tmps[0]);
                 ret.stopMonth = tmps[1];
                 ret.stopDate = tmps[2];
@@ -4719,27 +4931,43 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
                 ret.stopSec = tmps[5];
             } // if
 
-            payload.pack(ret.target, ret.control, ret.protocol, ret.startPort, ret.stopPort);
-            payload.pack(std::string_view{reinterpret_cast<const char*>(&ret.macAddr), sizeof(ether_addr)});
-            payload.pack(ret.startYear, ret.startMonth, ret.startDate, ret.startHour, ret.startMin);
-            payload.pack(ret.startSec, ret.stopYear, ret.stopMonth, ret.stopDate, ret.stopHour, ret.stopMin, ret.stopSec);
+            payload.pack(ret.target, ret.control, ret.protocol, ret.startPort,
+                         ret.stopPort);
+            payload.pack(
+                std::string_view{reinterpret_cast<const char*>(&ret.macAddr),
+                                 sizeof(ether_addr)});
+            payload.pack(ret.startYear, ret.startMonth, ret.startDate,
+                         ret.startHour, ret.startMin);
+            payload.pack(ret.startSec, ret.stopYear, ret.stopMonth,
+                         ret.stopDate, ret.stopHour, ret.stopMin, ret.stopSec);
 
             std::variant<in_addr, in6_addr> startAddr, stopAddr;
-            if (static_cast<ami::general::network::GetFirewallOEMParam>(parameter) == ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE) {
+            if (static_cast<ami::general::network::GetFirewallOEMParam>(
+                    parameter) ==
+                ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE)
+            {
                 std::string_view sv = startIPAddr;
                 sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
                 inet_pton(AF_INET, sv.data(), &startAddr);
                 inet_pton(AF_INET, endIPAddr.c_str(), &stopAddr);
-                payload.pack(std::string_view{reinterpret_cast<const char*>(&startAddr), sizeof(in_addr)});
-                payload.pack(std::string_view{reinterpret_cast<const char*>(&stopAddr), sizeof(in_addr)});
+                payload.pack(
+                    std::string_view{reinterpret_cast<const char*>(&startAddr),
+                                     sizeof(in_addr)});
+                payload.pack(std::string_view{
+                    reinterpret_cast<const char*>(&stopAddr), sizeof(in_addr)});
             } // if
-            else {
+            else
+            {
                 std::string_view sv = startIPAddr;
                 sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
                 inet_pton(AF_INET6, sv.data(), &startAddr);
                 inet_pton(AF_INET6, endIPAddr.c_str(), &stopAddr);
-                payload.pack(std::string_view{reinterpret_cast<const char*>(&startAddr), sizeof(in6_addr)});
-                payload.pack(std::string_view{reinterpret_cast<const char*>(&stopAddr), sizeof(in6_addr)});
+                payload.pack(
+                    std::string_view{reinterpret_cast<const char*>(&startAddr),
+                                     sizeof(in6_addr)});
+                payload.pack(
+                    std::string_view{reinterpret_cast<const char*>(&stopAddr),
+                                     sizeof(in6_addr)});
             } // else
 
             return ipmi::responseSuccess(payload);
@@ -4753,7 +4981,8 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(uint8_t paramete
     return ipmi::responseUnspecifiedError();
 }
 
-ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t req)
+ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx,
+                                    uint8_t req)
 {
     std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
     std::string policy = [](uint8_t policy) {
@@ -4764,7 +4993,7 @@ ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx, uin
             case 1:
                 return "xyz.openbmc_project.Logging.Settings.Policy.Circular";
         }
-        return "";  //For invalid request return emtpy string
+        return ""; // For invalid request return emtpy string
     }(req);
     if (policy.empty())
     {
@@ -4773,8 +5002,8 @@ ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx, uin
 
     try
     {
-        auto service =
-            ipmi::getService(*busp, loggingSettingIntf, loggingSettingObjPath);
+        auto service = ipmi::getService(*busp, loggingSettingIntf,
+                                        loggingSettingObjPath);
         ipmi::setDbusProperty(*busp, service, loggingSettingObjPath,
                               loggingSettingIntf, "SelPolicy", policy.c_str());
     }
@@ -4788,7 +5017,8 @@ ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx, uin
     return ipmi::responseSuccess();
 }
 
-ipmi::RspType<uint8_t> ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<uint8_t>
+    ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx)
 {
     uint8_t policy;
     std::string policyStr;
@@ -4796,11 +5026,11 @@ ipmi::RspType<uint8_t> ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr c
 
     try
     {
-        auto service =
-            ipmi::getService(*busp, loggingSettingIntf, loggingSettingObjPath);
-        Value variant =
-            ipmi::getDbusProperty(*busp, service, loggingSettingObjPath,
-                                  loggingSettingIntf, "SelPolicy");
+        auto service = ipmi::getService(*busp, loggingSettingIntf,
+                                        loggingSettingObjPath);
+        Value variant = ipmi::getDbusProperty(*busp, service,
+                                              loggingSettingObjPath,
+                                              loggingSettingIntf, "SelPolicy");
         policyStr = std::get<std::string>(variant);
     }
     catch (const sdbusplus::exception_t& e)
@@ -4812,179 +5042,193 @@ ipmi::RspType<uint8_t> ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr c
     }
 
     if (![&policy](std::string selPolicy) {
-            if (selPolicy ==
-                "xyz.openbmc_project.Logging.Settings.Policy.Linear")
-            {
-                policy = 0;
-                return true;
-            }
-            else if (selPolicy ==
-                     "xyz.openbmc_project.Logging.Settings.Policy.Circular")
-            {
-                policy = 1;
-                return true;
-            }
-            else
-                return false;
-        }(policyStr))
+        if (selPolicy == "xyz.openbmc_project.Logging.Settings.Policy.Linear")
+        {
+            policy = 0;
+            return true;
+        }
+        else if (selPolicy ==
+                 "xyz.openbmc_project.Logging.Settings.Policy.Circular")
+        {
+            policy = 1;
+            return true;
+        }
+        else
+            return false;
+    }(policyStr))
     {
         return ipmi::responseResponseError();
     }
     return ipmi::responseSuccess(policy);
 }
 
-uint32_t CalculateCRC32(unsigned char *Buffer, uint32_t Size)
+uint32_t CalculateCRC32(unsigned char* Buffer, uint32_t Size)
 {
-    uint32_t i,crc32 = 0xFFFFFFFF;
+    uint32_t i, crc32 = 0xFFFFFFFF;
 
-     /* Read the data and calculate crc32 */
-     for(i = 0; i < Size; i++)
-         crc32 = ((crc32) >> 8) ^ CrcLookUpTable[(Buffer[i])
-             ^ ((crc32) & 0x000000FF)];
-     return ~crc32;
+    /* Read the data and calculate crc32 */
+    for (i = 0; i < Size; i++)
+        crc32 = ((crc32) >> 8) ^
+                CrcLookUpTable[(Buffer[i]) ^ ((crc32) & 0x000000FF)];
+    return ~crc32;
 }
 
 ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     [[maybe_unused]] ipmi::Context::ptr ctx, uint8_t parameter,
-    std::optional<uint8_t> MSBFileOffset,
-    std::optional<uint8_t> FileOffset2, std::optional<uint8_t> FileOffset1,
-    std::optional<uint8_t> LSBFileOffset,
+    std::optional<uint8_t> MSBFileOffset, std::optional<uint8_t> FileOffset2,
+    std::optional<uint8_t> FileOffset1, std::optional<uint8_t> LSBFileOffset,
     std::optional<uint8_t> MSBNumberOfBytesToRead,
     std::optional<uint8_t> NumberOfBytesToRead2,
     std::optional<uint8_t> NumberOfBytesToRead1,
     std::optional<uint8_t> LSBNumberOfBytesToRead)
 {
-    uint32_t offset = 0, nbytes = 0, crc32=0;
+    uint32_t offset = 0, nbytes = 0, crc32 = 0;
     std::vector<uint8_t> respBuf;
- 
-	std::string ca;
-	std::vector<uint8_t> caVec;
-	std::string caSubString;
-	std::vector<uint8_t> caSubVec;
-	std::vector<std::string> paths;
-	
-	std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
-	
-	if (parameter == readCRC32AndSize)
-	{
-		 if (MSBFileOffset || FileOffset2 || FileOffset1 || LSBFileOffset ||
-        	MSBNumberOfBytesToRead || NumberOfBytesToRead2 ||
-        	NumberOfBytesToRead1 || LSBNumberOfBytesToRead)
-    	{
-        	return ipmi::responseReqDataLenInvalid();
-    	}
-	}
-	
-   	else if (parameter == readCACertFile)
-   	{
-    	if (!MSBFileOffset || !FileOffset2 || !FileOffset1 || !LSBFileOffset ||
-        	!MSBNumberOfBytesToRead || !NumberOfBytesToRead2 ||
-        	!NumberOfBytesToRead1 || !LSBNumberOfBytesToRead)
-    	{
-        	return ipmi::responseReqDataLenInvalid();
-    	}
 
-    	offset = (*MSBFileOffset << 24 | *FileOffset2 << 16 | *FileOffset1 << 8 |
-              	*LSBFileOffset);
+    std::string ca;
+    std::vector<uint8_t> caVec;
+    std::string caSubString;
+    std::vector<uint8_t> caSubVec;
+    std::vector<std::string> paths;
 
-    	nbytes = (*MSBNumberOfBytesToRead << 24 | *NumberOfBytesToRead2 << 16 |
-              	*NumberOfBytesToRead1 << 8 | *LSBNumberOfBytesToRead);
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
 
-    	if (nbytes == 0)
-    	{
-        	return ipmi::response(
-            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
-    	}
-    	if (nbytes > ipmbMaxDataSize)
-    	{
-        	return ipmi::response(
-            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
-    	}
-   	}
-	else 
-	{ 
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Unsupported parameter");
-        return ipmi::response(ccParameterNotSupported); 
-    }
-
-	auto method = busp->new_method_call("xyz.openbmc_project.ObjectMapper", "/xyz/openbmc_project/object_mapper",
-											  "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths");
-		method.append("/xyz/openbmc_project/certs/authority/ldap/");
-		method.append(0);
-		method.append(std::array<const char*, 1>{"xyz.openbmc_project.Certs.Certificate"});
-	try
-	{
-		sdbusplus::message_t reply = busp->call(method);
-		reply.read(paths);
-				
-		if (paths.size() < 1)
-		{
-			phosphor::logging::log<phosphor::logging::level::ERR>(
-								"Failed to cert messages");
-			return ipmi::response(
-					ipmi::ipmiCCNoCertGenerated);
-	
-		}			
-	
-	}
-	catch (const std::exception& e)
-	{
-		phosphor::logging::log<phosphor::logging::level::ERR>(
-			"Failed to get Ldap genereated certificate",
-			phosphor::logging::entry("EXCEPTION=%s", e.what()));
-		return ipmi::response(
-					ipmi::ipmiCCNoCertGenerated);
-	}
-	
-	try
-	{	   
-		Value variant =
-			ipmi::getDbusProperty(*busp, "xyz.openbmc_project.Certs.Manager.Authority.Ldap", 
-			paths[0].c_str(),
-									 "xyz.openbmc_project.Certs.Certificate", "CertificateString");
-			ca = std::get<std::string>(variant);
-			caVec.assign(ca.begin(), ca.end()); 	
-	}	
-	catch (const std::exception& e)
-	{
-		phosphor::logging::log<phosphor::logging::level::ERR>(
-			"Failed to get Ldap genereated certificate",
-			phosphor::logging::entry("EXCEPTION=%s", e.what()));
-		return ipmi::response(
-					ipmi::ipmiCCNoCertGenerated);
-	}
-
-	if ((off_t)(offset + nbytes) > ca.size())
-    {
-    	return ipmi::response(
-            	ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
-    }
-
-	caSubString = ca.substr(offset, nbytes);
-	caSubVec.assign(caSubString.begin(), caSubString.end());
-	
     if (parameter == readCRC32AndSize)
     {
-		crc32=CalculateCRC32(static_cast<unsigned char*>(caVec.data()),static_cast<uint32_t>(caVec.size()));
-        
-		respBuf.push_back((crc32 & 0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file crc32
-        respBuf.push_back(((crc32 >> 8) & 0xff));// Byte 2 of the 32-bit value of the cert file crc32
-        respBuf.push_back(((crc32 >> 16) & 0xff)); // Byte 3 of the 32-bit value of the cert file crc32
-        respBuf.push_back(((crc32 >> 24) & 0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file crc32
-        //fileSize 
-        respBuf.push_back((caVec.size() & 0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file size
-        respBuf.push_back(((caVec.size() >> 8) & 0xff));// Byte 2 of the 32-bit value of the cert file size
-        respBuf.push_back(((caVec.size() >> 16) & 0xff)); // Byte 3 of the 32-bit value of the cert file size
-        respBuf.push_back(((caVec.size() >> 24) & 0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file size
-		
+        if (MSBFileOffset || FileOffset2 || FileOffset1 || LSBFileOffset ||
+            MSBNumberOfBytesToRead || NumberOfBytesToRead2 ||
+            NumberOfBytesToRead1 || LSBNumberOfBytesToRead)
+        {
+            return ipmi::responseReqDataLenInvalid();
+        }
+    }
+
+    else if (parameter == readCACertFile)
+    {
+        if (!MSBFileOffset || !FileOffset2 || !FileOffset1 || !LSBFileOffset ||
+            !MSBNumberOfBytesToRead || !NumberOfBytesToRead2 ||
+            !NumberOfBytesToRead1 || !LSBNumberOfBytesToRead)
+        {
+            return ipmi::responseReqDataLenInvalid();
+        }
+
+        offset = (*MSBFileOffset << 24 | *FileOffset2 << 16 |
+                  *FileOffset1 << 8 | *LSBFileOffset);
+
+        nbytes = (*MSBNumberOfBytesToRead << 24 | *NumberOfBytesToRead2 << 16 |
+                  *NumberOfBytesToRead1 << 8 | *LSBNumberOfBytesToRead);
+
+        if (nbytes == 0)
+        {
+            return ipmi::response(
+                ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+        }
+        if (nbytes > ipmbMaxDataSize)
+        {
+            return ipmi::response(
+                ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+        }
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Unsupported parameter");
+        return ipmi::response(ccParameterNotSupported);
+    }
+
+    auto method = busp->new_method_call("xyz.openbmc_project.ObjectMapper",
+                                        "/xyz/openbmc_project/object_mapper",
+                                        "xyz.openbmc_project.ObjectMapper",
+                                        "GetSubTreePaths");
+    method.append("/xyz/openbmc_project/certs/authority/ldap/");
+    method.append(0);
+    method.append(
+        std::array<const char*, 1>{"xyz.openbmc_project.Certs.Certificate"});
+    try
+    {
+        sdbusplus::message_t reply = busp->call(method);
+        reply.read(paths);
+
+        if (paths.size() < 1)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to cert messages");
+            return ipmi::response(ipmi::ipmiCCNoCertGenerated);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get Ldap genereated certificate",
+            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::response(ipmi::ipmiCCNoCertGenerated);
+    }
+
+    try
+    {
+        Value variant = ipmi::getDbusProperty(
+            *busp, "xyz.openbmc_project.Certs.Manager.Authority.Ldap",
+            paths[0].c_str(), "xyz.openbmc_project.Certs.Certificate",
+            "CertificateString");
+        ca = std::get<std::string>(variant);
+        caVec.assign(ca.begin(), ca.end());
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get Ldap genereated certificate",
+            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::response(ipmi::ipmiCCNoCertGenerated);
+    }
+
+    if ((off_t)(offset + nbytes) > ca.size())
+    {
+        return ipmi::response(
+            ipmi::ipmiCCFileSelectorOrOffsetAndLengthOutOfRange);
+    }
+
+    caSubString = ca.substr(offset, nbytes);
+    caSubVec.assign(caSubString.begin(), caSubString.end());
+
+    if (parameter == readCRC32AndSize)
+    {
+        crc32 = CalculateCRC32(static_cast<unsigned char*>(caVec.data()),
+                               static_cast<uint32_t>(caVec.size()));
+
+        respBuf.push_back(
+            (crc32 &
+             0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file crc32
+        respBuf.push_back(
+            ((crc32 >> 8) &
+             0xff)); // Byte 2 of the 32-bit value of the cert file crc32
+        respBuf.push_back(
+            ((crc32 >> 16) &
+             0xff)); // Byte 3 of the 32-bit value of the cert file crc32
+        respBuf.push_back(
+            ((crc32 >> 24) &
+             0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file crc32
+        // fileSize
+        respBuf.push_back(
+            (caVec.size() &
+             0xff)); // Byte 1 (LSB) of the 32-bit value of the cert file size
+        respBuf.push_back(
+            ((caVec.size() >> 8) &
+             0xff)); // Byte 2 of the 32-bit value of the cert file size
+        respBuf.push_back(
+            ((caVec.size() >> 16) &
+             0xff)); // Byte 3 of the 32-bit value of the cert file size
+        respBuf.push_back(
+            ((caVec.size() >> 24) &
+             0xff)); // Byte 1 (MSB) of the 32-bit value of the cert file size
+
         return ipmi::responseSuccess(respBuf);
     }
-	
+
     return ipmi::responseSuccess(caSubVec);
 }
 
-ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<uint8_t>
+    ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx)
 {
     try
     {
@@ -4993,8 +5237,7 @@ ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr c
 
         // Create method call message to get the service unit properties
         auto method = dbus->new_method_call(systemDService, systemDObjPath,
-                                           systemDMgrIntf,
-                                           "GetUnit");
+                                            systemDMgrIntf, "GetUnit");
         method.append(ipmiKcsService);
 
         auto reply = dbus->call(method);
@@ -5011,7 +5254,7 @@ ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr c
             systemDInterfaceUnit, "Get");
 
         method.append("org.freedesktop.systemd1.Unit", "ActiveState");
-  try
+        try
         {
             auto result = dbus->call(method);
             result.read(currentState);
@@ -5026,7 +5269,8 @@ ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr c
 
         uint8_t kcsstate = 0;
 
-        if (currentStateStr == activeState || currentStateStr == activatingState)
+        if (currentStateStr == activeState ||
+            currentStateStr == activatingState)
         {
             kcsstate = 1;
         }
@@ -5043,37 +5287,35 @@ ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr c
     }
 }
 
-ipmi::RspType<> ipmiOEMSetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t reqData)
+ipmi::RspType<> ipmiOEMSetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx,
+                                    uint8_t reqData)
 {
-
-   if (reqData == KCS_ENABLE || reqData == KCS_DISABLE)
+    if (reqData == KCS_ENABLE || reqData == KCS_DISABLE)
     {
-            try
-            {
-
-                auto dbus = getSdBus();
-                auto method = dbus->new_method_call(systemDService, systemDObjPath,
-                                            systemDMgrIntf,
-                                            reqData ? "StartUnit" : "StopUnit");
-                method.append(ipmiKcsService, "replace");
-                auto reply = dbus->call(method);
-                return ipmi::responseSuccess();
-            }
-            catch (const sdbusplus::exception_t& e)
-            {
-
-                return ipmi::responseResponseError();
-            }
-    }
-
-    else{
-
+        try
+        {
+            auto dbus = getSdBus();
+            auto method = dbus->new_method_call(
+                systemDService, systemDObjPath, systemDMgrIntf,
+                reqData ? "StartUnit" : "StopUnit");
+            method.append(ipmiKcsService, "replace");
+            auto reply = dbus->call(method);
+            return ipmi::responseSuccess();
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
             return ipmi::responseResponseError();
+        }
     }
 
+    else
+    {
+        return ipmi::responseResponseError();
+    }
 }
 
-ipmi::RspType<> ipmiOEMCancelTask([[maybe_unused]] ipmi::Context::ptr ctx, uint8_t req)
+ipmi::RspType<> ipmiOEMCancelTask([[maybe_unused]] ipmi::Context::ptr ctx,
+                                  uint8_t req)
 {
     if (req == INVALID_ID)
     {
@@ -5144,6 +5386,624 @@ ipmi::RspType<> ipmiOEMCancelTask([[maybe_unused]] ipmi::Context::ptr ctx, uint8
 
     // couldn't find requested ID
     return ipmi::responseInvalidFieldRequest();
+}
+
+ipmi::RspType<uint8_t, uint8_t> ipmiGetUsbDescription(uint8_t type)
+{
+    uint8_t msbId;
+    uint8_t lsbId;
+    if (type == 0x01)
+    {
+        // Get the USB Vendor Id
+        msbId = (uint8_t)((USB_VENDOR_ID >> 8) & 0xff);
+        lsbId = (uint8_t)(USB_VENDOR_ID & 0xff);
+        return ipmi::responseSuccess(msbId, lsbId);
+    }
+    else if (type == 0x02)
+    {
+        // Get the USB Product Id
+        msbId = (uint8_t)((USB_PRODUCT_ID >> 8) & 0xff);
+        lsbId = (uint8_t)(USB_PRODUCT_ID & 0xff);
+        return ipmi::responseSuccess(msbId, lsbId);
+    }
+    else
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+}
+ipmi::RspType<std::vector<uint8_t>> ipmiGetUsbSerialNum()
+{
+    // Get the USB Serial Number
+    std::vector<uint8_t> usbSerialNum;
+    usbSerialNum.push_back(USB_SERIAL_NUM);
+    return ipmi::responseSuccess(usbSerialNum);
+}
+
+ipmi::RspType<std::vector<uint8_t>> ipmiGetRedfishHostName()
+{
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    try
+    {
+        auto service = ipmi::getService(*dbus, networkConfigIntf,
+                                        networkConfigObj);
+        auto hostname = ipmi::getDbusProperty(*dbus, service, networkConfigObj,
+                                              networkConfigIntf, "HostName");
+        std::vector<uint8_t> respHostNameBuf;
+        std::copy(std::get<std::string>(hostname).begin(),
+                  std::get<std::string>(hostname).end(),
+                  std::back_inserter(respHostNameBuf));
+        return ipmi::responseSuccess(respHostNameBuf);
+    }
+    catch (std::exception& e)
+    {
+        log<level::ERR>("Failed to get HostName",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseResponseError();
+    }
+}
+
+ipmi::RspType<uint8_t> ipmiGetipmiChannelRfHi()
+{
+    std::ifstream jsonFile(channelConfigDefaultFilename);
+    if (!jsonFile.good())
+    {
+        log<level::INFO>("JSON file not found",
+                         entry("FILE_NAME=%s", channelConfigDefaultFilename));
+        return ipmi::responseResponseError();
+    }
+
+    nlohmann::json data = nullptr;
+    try
+    {
+        data = nlohmann::json::parse(jsonFile, nullptr, false);
+    }
+    catch (const nlohmann::json::parse_error& e)
+    {
+        log<level::DEBUG>("Corrupted channel config.",
+                          entry("MSG=%s", e.what()));
+        return ipmi::responseResponseError();
+    }
+
+    bool chFound = false;
+    uint8_t chNum;
+    for (chNum = 0; chNum < maxIpmiChannels; chNum++)
+    {
+        try
+        {
+            std::string chKey = std::to_string(chNum);
+            nlohmann::json jsonChData = data[chKey].get<nlohmann::json>();
+            if (jsonChData.is_null() ||
+                (jsonChData[nameString].get<std::string>() !=
+                 redfishHostInterfaceChannel))
+            {
+                log<level::WARNING>(
+                    "Channel not configured for Redfish Host Interface",
+                    entry("CHANNEL_NUM=%d", chNum));
+                continue;
+            }
+            nlohmann::json jsonChInfo =
+                jsonChData[channelInfoString].get<nlohmann::json>();
+            if (jsonChInfo.is_null())
+            {
+                log<level::ERR>("Invalid/corrupted channel config file");
+                return ipmi::responseResponseError();
+            }
+
+            if ((jsonChData[isValidString].get<bool>() == true) &&
+                (jsonChInfo[mediumTypeString].get<std::string>() ==
+                 "lan-802.3") &&
+                (jsonChInfo[protocolTypeString].get<std::string>() ==
+                 "ipmb-1.0") &&
+                (jsonChInfo[sessionSupportedString].get<std::string>() ==
+                 "multi-session") &&
+                (jsonChInfo[isIpmiString].get<bool>() == true))
+            {
+                chFound = true;
+                break;
+            }
+        }
+        catch (const nlohmann::json::parse_error& e)
+        {
+            log<level::DEBUG>("Json Exception caught.",
+                              entry("MSG=%s", e.what()));
+            return ipmi::responseResponseError();
+        }
+    }
+    jsonFile.close();
+    if (chFound)
+    {
+        return ipmi::responseSuccess(chNum);
+    }
+    return ipmi::responseInvalidCommandOnLun();
+}
+
+bool getRfUuid(std::string& rfUuid)
+{
+    std::ifstream persistentDataFilePath(
+        "/home/root/bmcweb_persistent_data.json");
+    if (persistentDataFilePath.is_open())
+    {
+        auto data = nlohmann::json::parse(persistentDataFilePath, nullptr,
+                                          false);
+        if (data.is_discarded())
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetRedfishServiceUuid: Error parsing persistent data in "
+                "json file.");
+            return false;
+        }
+        else
+        {
+            for (const auto& item : data.items())
+            {
+                if (item.key() == "system_uuid")
+                {
+                    const std::string* jSystemUuid =
+                        item.value().get_ptr<const std::string*>();
+                    if (jSystemUuid != nullptr)
+                    {
+                        rfUuid = *jSystemUuid;
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+ipmi::RspType<std::vector<uint8_t>> ipmiGetRedfishServiceUuid()
+{
+    std::string rfUuid;
+    bool ret = getRfUuid(rfUuid);
+    if (!ret)
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetRedfishServiceUuid: Error reading Redfish Service UUID "
+            "File.");
+        return ipmi::responseResponseError();
+    }
+
+    // As per Redfish Host Interface Spec v1.3.0
+    // The Redfish UUID is 16byte and should be represented as below:
+    // Ex: {00112233-4455-6677-8899-AABBCCDDEEFF}
+    // 0x33 0x22 0x11 0x00 0x55 0x44 0x77 0x66 0x88 0x99 0xAA 0xBB 0xCC 0xDD
+    // 0xEE 0xFF
+
+    int start = 0;
+    int noOfBytes = 5;
+    int leftBytes = 3;
+    int totalBytes = 16;
+    std::string bytes;
+    std::string::size_type found = 0;
+    std::vector<uint8_t> resBuf;
+
+    for (int index = 0; index < noOfBytes; index++)
+    {
+        found = rfUuid.find('-', found + 1);
+        if (found == std::string::npos)
+        {
+            if (index != noOfBytes - 1)
+            {
+                break;
+            }
+        }
+
+        if (index == noOfBytes - 1)
+        {
+            bytes = rfUuid.substr(start);
+        }
+        else
+        {
+            bytes = rfUuid.substr(start, found - start);
+        }
+
+        if (index < leftBytes)
+        {
+            std::reverse(bytes.begin(), bytes.end());
+            for (int leftIndex = 0; leftIndex < bytes.length(); leftIndex += 2)
+            {
+                std::swap(bytes[leftIndex + 1], bytes[leftIndex]);
+                resBuf.push_back(
+                    std::stoi(bytes.substr(leftIndex, 2), nullptr, 16));
+            }
+        }
+        else
+        {
+            for (int rightIndex = 0; rightIndex < bytes.length();
+                 rightIndex += 2)
+            {
+                resBuf.push_back(
+                    std::stoi(bytes.substr(rightIndex, 2), nullptr, 16));
+            }
+        }
+        start = found + 1;
+    }
+
+    if (resBuf.size() != totalBytes)
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetRedfishServiceUuid: Invalid Redfish Service UUID found.");
+        return ipmi::responseResponseError();
+    }
+    return ipmi::responseSuccess(resBuf);
+}
+
+ipmi::RspType<uint8_t, uint8_t> ipmiGetRedfishServicePort()
+{
+    // default Redfish Service Port Number is 443
+    int redfishPort = 443;
+    uint8_t lsb = redfishPort & 0xff;
+    uint8_t msb = redfishPort >> 8 & 0xff;
+    return ipmi::responseSuccess(msb, lsb);
+}
+
+static bool getCredentialBootStrap()
+{
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    try
+    {
+        auto biosService = ipmi::getService(*dbus, biosConfigMgrIface,
+                                            biosConfigMgrPath);
+        auto credentialBootStrap =
+            ipmi::getDbusProperty(*dbus, biosService, biosConfigMgrPath,
+                                  biosConfigMgrIface, "CredentialBootstrap");
+
+        return std::get<bool>(credentialBootStrap);
+    }
+    catch (std::exception& e)
+    {
+        log<level::ERR>("Failed to get CredentialBootstrap status",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return false;
+    }
+}
+
+static void setCredentialBootStrap(const uint8_t& disableCredBootStrap)
+{
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    auto biosService = ipmi::getService(*dbus, biosConfigMgrIface,
+                                        biosConfigMgrPath);
+    // if disable crendential BootStrap status is 0xa5,
+    // then Keep credential bootstrapping enabled
+    if (disableCredBootStrap == 0xa5)
+    {
+        ipmi::setDbusProperty(*dbus, biosService, biosConfigMgrPath,
+                              biosConfigMgrIface, "CredentialBootstrap",
+                              bool(true));
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "ipmiGetBootStrapAccount: Disable CredentialBootstrapping"
+            "property set to true");
+    }
+    else
+    {
+        ipmi::setDbusProperty(*dbus, biosService, biosConfigMgrPath,
+                              biosConfigMgrIface, "CredentialBootstrap",
+                              bool(false));
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "ipmiGetBootStrapAccount: Disable CredentialBootstrapping"
+            "property set to false");
+    }
+}
+
+static int pamFunctionConversation(int numMsg, const struct pam_message** msg,
+                                   struct pam_response** resp, void* appdataPtr)
+{
+    if (appdataPtr == nullptr)
+    {
+        return PAM_CONV_ERR;
+    }
+    if (numMsg <= 0 || numMsg >= PAM_MAX_NUM_MSG)
+    {
+        return PAM_CONV_ERR;
+    }
+
+    for (int i = 0; i < numMsg; ++i)
+    {
+        /* Ignore all PAM messages except prompting for hidden input */
+        if (msg[i]->msg_style != PAM_PROMPT_ECHO_OFF)
+        {
+            continue;
+        }
+
+        /* Assume PAM is only prompting for the password as hidden input */
+        /* Allocate memory only when PAM_PROMPT_ECHO_OFF is encounterred */
+        char* appPass = reinterpret_cast<char*>(appdataPtr);
+        size_t appPassSize = std::strlen(appPass);
+        if (appPassSize >= PAM_MAX_RESP_SIZE)
+        {
+            return PAM_CONV_ERR;
+        }
+
+        char* pass = reinterpret_cast<char*>(malloc(appPassSize + 1));
+        if (pass == nullptr)
+        {
+            return PAM_BUF_ERR;
+        }
+
+        void* ptr = calloc(static_cast<size_t>(numMsg),
+                           sizeof(struct pam_response));
+        if (ptr == nullptr)
+        {
+            free(pass);
+            return PAM_BUF_ERR;
+        }
+
+        std::strncpy(pass, appPass, appPassSize + 1);
+        *resp = reinterpret_cast<pam_response*>(ptr);
+        resp[i]->resp = pass;
+        return PAM_SUCCESS;
+    }
+    return PAM_CONV_ERR;
+}
+
+int pamUpdatePasswd(const char* username, const char* password)
+{
+    const struct pam_conv localConversation = {pamFunctionConversation,
+                                               const_cast<char*>(password)};
+    pam_handle_t* localAuthHandle = NULL; // this gets set by pam_start
+    int retval = pam_start("passwd", username, &localConversation,
+                           &localAuthHandle);
+    if (retval != PAM_SUCCESS)
+    {
+        return retval;
+    }
+
+    retval = pam_chauthtok(localAuthHandle, PAM_SILENT);
+    if (retval != PAM_SUCCESS)
+    {
+        pam_end(localAuthHandle, retval);
+        return retval;
+    }
+    return pam_end(localAuthHandle, PAM_SUCCESS);
+}
+
+bool isValidUserName(ipmi::Context::ptr ctx, const std::string& userName)
+{
+    if (userName.empty())
+    {
+        phosphor::logging::log<level::ERR>("Requested empty UserName string");
+        return false;
+    }
+    if (!std::regex_match(userName.c_str(),
+                          std::regex("[a-zA-z_][a-zA-Z_0-9]*")))
+    {
+        phosphor::logging::log<level::ERR>("Unsupported characters in string");
+        return false;
+    }
+
+    boost::system::error_code ec;
+    GetSubTreePathsType subtreePaths =
+        ctx->bus->yield_method_call<GetSubTreePathsType>(
+            ctx->yield, ec, "xyz.openbmc_project.ObjectMapper",
+            "/xyz/openbmc_project/object_mapper",
+            "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths",
+            userMgrObjBasePath, 0, std::array<const char*, 1>{usersInterface});
+    if (ec)
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetBootStrapAccount: Failed to get User Paths");
+        return false;
+    }
+
+    if (subtreePaths.empty())
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetBootStrapAccount: empty subtreepaths");
+        return false;
+    }
+
+    for (const auto& objectPath : subtreePaths)
+    {
+        if (objectPath.find(userName) != std::string::npos)
+        {
+            log<level::ERR>(
+                "User name already exists",
+                phosphor::logging::entry("UserName= %s", userName.c_str()));
+            return false;
+        }
+    }
+    return true;
+}
+
+bool getAlphaNumString(std::string& uniqueStr)
+{
+    std::ifstream randFp("/dev/urandom", std::ifstream::in);
+    char byte;
+    uint8_t maxStrSize = 16;
+
+    if (!randFp.is_open())
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetBootStrapAccount: Failed to open urandom file");
+        return false;
+    }
+
+    for (uint8_t it = 0; it < maxStrSize; it++)
+    {
+        while (1)
+        {
+            if (randFp.get(byte))
+            {
+                if (iswalnum(byte))
+                {
+                    break;
+                }
+            }
+        }
+        uniqueStr.push_back(byte);
+    }
+    randFp.close();
+    return true;
+}
+
+ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
+    ipmiGetBootStrapAccount(ipmi::Context::ptr ctx,
+                            uint8_t disableCredBootStrap)
+{
+    try
+    {
+        // Check the CredentialBootstrapping property status,
+        // if disabled, then reject the command with success code.
+        bool isCredentialBooStrapSet = getCredentialBootStrap();
+        if (!isCredentialBooStrapSet)
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetBootStrapAccount: Credential BootStrapping Disabled "
+                "Get BootStrap Account command rejected.");
+            return ipmi::responseSuccess();
+        }
+
+        std::string userName;
+        std::string password;
+
+        bool ret = getAlphaNumString(userName);
+        if (!ret)
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetBootStrapAccount: Failed to generate alphanumeric "
+                "UserName");
+            return ipmi::responseResponseError();
+        }
+        if (!isValidUserName(ctx, userName))
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetBootStrapAccount: Failed to generate valid UserName");
+            return ipmi::responseResponseError();
+        }
+
+        ret = getAlphaNumString(password);
+        if (!ret)
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetBootStrapAccount: Failed to generate alphanumeric "
+                "Password");
+            return ipmi::responseResponseError();
+        }
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+        std::string service = getService(*dbus, userMgrInterface,
+                                         userMgrObjBasePath);
+
+        // create the new user with only redfish-hostiface group access
+        auto method = dbus->new_method_call(service.c_str(), userMgrObjBasePath,
+                                            userMgrInterface, createUserMethod);
+        method.append(userName, std::vector<std::string>{"redfish-hostiface"},
+                      "priv-admin", true);
+        auto reply = dbus->call(method);
+        if (reply.is_method_error())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error returns from call to dbus. BootStrap Failed");
+            return ipmi::responseResponseError();
+        }
+
+        // update the password
+        boost::system::error_code ec;
+        int retval = pamUpdatePasswd(userName.c_str(), password.c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            dbus->yield_method_call<void>(ctx->yield, ec, service.c_str(),
+                                          userMgrObjBasePath + userName,
+                                          usersDeleteIface, "Delete");
+
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiGetBootStrapAccount : Failed to update password.");
+            return ipmi::responseUnspecifiedError();
+        }
+        else
+        {
+            // update the "CredentialBootstrap" Dbus property w.r.to
+            // disable crendential BootStrap status
+            setCredentialBootStrap(disableCredBootStrap);
+
+            std::vector<uint8_t> respUserNameBuf, respPasswordBuf;
+            std::copy(userName.begin(), userName.end(),
+                      std::back_inserter(respUserNameBuf));
+            std::copy(password.begin(), password.end(),
+                      std::back_inserter(respPasswordBuf));
+            return ipmi::responseSuccess(respUserNameBuf, respPasswordBuf);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ipmiGetBootStrapAccount : Failed to generate BootStrap Account "
+            "Credentials");
+        return ipmi::responseResponseError();
+    }
+}
+
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiGetManagerCertFingerPrint(ipmi::Context::ptr ctx, uint8_t certNum)
+{
+    unsigned int n;
+    const EVP_MD* fdig = EVP_sha256();
+    // Check the CredentialBootstrapping property status,
+    // if disabled, then reject the command with success code.
+    bool isCredentialBooStrapSet = getCredentialBootStrap();
+    if (!isCredentialBooStrapSet)
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetManagerCertFingerPrint: Credential BootStrapping Disabled "
+            "Get Manager Certificate FingerPrint command rejected.");
+        return ipmi::response(ipmi::ipmiCCBootStrappingDisabled);
+    }
+
+    if (certNum != 1)
+    {
+        phosphor::logging::log<level::ERR>(
+            "ipmiGetManagerCertFingerPrint: Invalid certificate number "
+            "Get Manager Certificate failed");
+        return ipmi::response(ipmi::ipmiCCCertificateNumberInvalid);
+    }
+    BIO* cert;
+    X509* x = NULL;
+    cert = BIO_new_file(defaultCertPath.c_str(), "rb");
+    if (cert == NULL)
+    {
+        log<level::ERR>(
+            "ipmiGetManagerCertFingerPrint: unable to open certificate");
+        return ipmi::response(ipmi::ccResponseError);
+    }
+    x = PEM_read_bio_X509_AUX(cert, NULL, NULL, NULL);
+    if (x == NULL)
+    {
+        BIO_free(cert);
+        log<level::ERR>(
+            "ipmiGetManagerCertFingerPrint: unable to load certificate");
+        return ipmi::response(ipmi::ccResponseError);
+    }
+    std::vector<uint8_t> fingerPrintData(EVP_MAX_MD_SIZE);
+    if (!X509_digest(x, fdig, fingerPrintData.data(), &n))
+    {
+        X509_free(x);
+        BIO_free(cert);
+        log<level::ERR>("ipmiGetManagerCertFingerPrint: out of memory");
+        return ipmi::response(ipmi::ccResponseError);
+    }
+    fingerPrintData.resize(n);
+
+    X509_free(x);
+    BIO_free(cert);
+
+    try
+    {
+        std::vector<uint8_t> respBuf;
+        respBuf.push_back(1); // 01h: SHA-256. The length of the fingerprint
+                              // will be 32 bytes.
+
+        for (const auto& data : fingerPrintData)
+        {
+            respBuf.push_back(data);
+        }
+        return ipmi::responseSuccess(respBuf);
+    }
+    catch (std::exception& e)
+    {
+        log<level::ERR>("Failed to get Manager Cert FingerPrint",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseResponseError();
+    }
 }
 
 static void registerOEMFunctions(void)
@@ -5330,14 +6190,14 @@ static void registerOEMFunctions(void)
 
     // <Set Firewall Configuration>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMSetFirewallConfiguration, Privilege::User,
-                    ipmiOEMSetFirewallConfiguration);
+                    ami::general::cmdOEMSetFirewallConfiguration,
+                    Privilege::User, ipmiOEMSetFirewallConfiguration);
 
     // // <Get Firewall Configuration>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMGetFirewallConfiguration, Privilege::User,
-                    ipmiOEMGetFirewallConfiguration);
- 
+                    ami::general::cmdOEMGetFirewallConfiguration,
+                    Privilege::User, ipmiOEMGetFirewallConfiguration);
+
     // <Set SMTP Config>
     registerHandler(prioOemBase, intel::netFnGeneral,
                     intel::general::cmdOEMSetSmtpConfig, Privilege::User,
@@ -5358,7 +6218,6 @@ static void registerOEMFunctions(void)
                     ami::general::cmdOEMGetSELPolicy, Privilege::User,
                     ipmiOEMGetSELPolicy);
 
-
     //<Get KCS Status>
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetKCSStatus, Privilege::User,
@@ -5374,6 +6233,81 @@ static void registerOEMFunctions(void)
                     ami::general::cmdOEMCancelTask, Privilege::User,
                     ipmiOEMCancelTask);
 
+    // <Get USB Description>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetUsbDescription));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetUsbDescription,
+                          ipmi::Privilege::Admin, ipmi::ipmiGetUsbDescription);
+
+    // <Get Virtual USB Serial Number>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetUsbSerialNum));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetUsbSerialNum,
+                          ipmi::Privilege::Admin, ipmi::ipmiGetUsbSerialNum);
+
+    // <Get Redfish Service Hostname>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetRedfishHostName));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetRedfishHostName,
+                          ipmi::Privilege::Admin, ipmi::ipmiGetRedfishHostName);
+
+    // <Get IPMI Channel Number of Redfish HostInterface>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetipmiChannelRfHi));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetipmiChannelRfHi,
+                          ipmi::Privilege::Admin, ipmi::ipmiGetipmiChannelRfHi);
+
+    // <Get Redfish Service UUID>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetRedfishServiceUuid));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetRedfishServiceUuid,
+                          ipmi::Privilege::Admin,
+                          ipmi::ipmiGetRedfishServiceUuid);
+
+    // <Get Redfish Service Port Number>
+    log<level::NOTICE>(
+        "Registering ", entry("NetFn:[%02Xh], ", ipmi::intel::netFnOem),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetRedfishServicePort));
+
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnOem,
+                          ipmi::intel::misc::cmdGetRedfishServicePort,
+                          ipmi::Privilege::Admin,
+                          ipmi::ipmiGetRedfishServicePort);
+
+    // <Get Bootstrap Account Credentials>
+    log<level::NOTICE>(
+        "Registering ", entry("GrpExt:[%02Xh], ", ipmi::intel::netGroupExt),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetBootStrapAcc));
+
+    ipmi::registerGroupHandler(ipmi::prioOpenBmcBase, ipmi::intel::netGroupExt,
+                               ipmi::intel::misc::cmdGetBootStrapAcc,
+                               ipmi::Privilege::sysIface,
+                               ipmi::ipmiGetBootStrapAccount);
+
+    // <Get Manager Certificate Fingerprint>
+    log<level::NOTICE>(
+        "Registering ", entry("GrpExt:[%02Xh], ", ipmi::intel::netGroupExt),
+        entry("Cmd:[%02Xh]", ipmi::intel::misc::cmdGetManagerCertFingerPrint));
+
+    ipmi::registerGroupHandler(ipmi::prioOpenBmcBase, ipmi::intel::netGroupExt,
+                               ipmi::intel::misc::cmdGetManagerCertFingerPrint,
+                               ipmi::Privilege::Admin,
+                               ipmi::ipmiGetManagerCertFingerPrint);
 }
 
 } // namespace ipmi
