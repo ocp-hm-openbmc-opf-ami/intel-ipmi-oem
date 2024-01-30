@@ -18,7 +18,6 @@
 #include "xyz/openbmc_project/Common/error.hpp"
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
 
-#include <bits/stdc++.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
@@ -5573,7 +5572,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetRedfishServiceUuid()
     int start = 0;
     int noOfBytes = 5;
     int leftBytes = 3;
-    int totalBytes = 16;
+    unsigned int totalBytes = 16;
     std::string bytes;
     std::string::size_type found = 0;
     std::vector<uint8_t> resBuf;
@@ -5601,7 +5600,8 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetRedfishServiceUuid()
         if (index < leftBytes)
         {
             std::reverse(bytes.begin(), bytes.end());
-            for (int leftIndex = 0; leftIndex < bytes.length(); leftIndex += 2)
+            for (unsigned int leftIndex = 0; leftIndex < bytes.length();
+                 leftIndex += 2)
             {
                 std::swap(bytes[leftIndex + 1], bytes[leftIndex]);
                 resBuf.push_back(
@@ -5610,7 +5610,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetRedfishServiceUuid()
         }
         else
         {
-            for (int rightIndex = 0; rightIndex < bytes.length();
+            for (unsigned int rightIndex = 0; rightIndex < bytes.length();
                  rightIndex += 2)
             {
                 resBuf.push_back(
@@ -5934,7 +5934,7 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
 }
 
 ipmi::RspType<std::vector<uint8_t>>
-    ipmiGetManagerCertFingerPrint(ipmi::Context::ptr ctx, uint8_t certNum)
+    ipmiGetManagerCertFingerPrint(uint8_t certNum)
 {
     unsigned int n;
     const EVP_MD* fdig = EVP_sha256();
