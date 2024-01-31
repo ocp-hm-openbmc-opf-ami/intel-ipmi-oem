@@ -5139,7 +5139,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
                                         "/xyz/openbmc_project/object_mapper",
                                         "xyz.openbmc_project.ObjectMapper",
                                         "GetSubTreePaths");
-    method.append("/xyz/openbmc_project/certs/authority/ldap/");
+    method.append("/xyz/openbmc_project/certs/authority/truststore/");
     method.append(0);
     method.append(
         std::array<const char*, 1>{"xyz.openbmc_project.Certs.Certificate"});
@@ -5158,7 +5158,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     catch (const std::exception& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to get Ldap genereated certificate",
+            "Failed to get Truststore genereated certificate",
             phosphor::logging::entry("EXCEPTION=%s", e.what()));
         return ipmi::response(ipmi::ipmiCCNoCertGenerated);
     }
@@ -5166,7 +5166,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     try
     {
         Value variant = ipmi::getDbusProperty(
-            *busp, "xyz.openbmc_project.Certs.Manager.Authority.Ldap",
+            *busp, "xyz.openbmc_project.Certs.Manager.Authority.Truststore",
             paths[0].c_str(), "xyz.openbmc_project.Certs.Certificate",
             "CertificateString");
         ca = std::get<std::string>(variant);
@@ -5175,7 +5175,7 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     catch (const std::exception& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to get Ldap genereated certificate",
+            "Failed to get Truststore genereated certificate",
             phosphor::logging::entry("EXCEPTION=%s", e.what()));
         return ipmi::response(ipmi::ipmiCCNoCertGenerated);
     }
