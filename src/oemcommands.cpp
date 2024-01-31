@@ -5806,6 +5806,97 @@ bool isValidUserName(ipmi::Context::ptr ctx, const std::string& userName)
     return true;
 }
 
+bool isPrintable(char ch) 
+{
+    return std::isprint(static_cast<unsigned char>(ch)) != 0;
+}
+
+bool isUppercase(char ch) 
+{
+    return std::isupper(static_cast<unsigned char>(ch)) != 0;
+}
+
+bool isLowercase(char ch) 
+{
+    return std::islower(static_cast<unsigned char>(ch)) != 0;
+}
+
+bool isDigit(char ch) 
+{
+    return std::isdigit(static_cast<unsigned char>(ch)) != 0;
+}
+
+bool isSpecialChar(char ch) 
+{
+    return isPrintable(ch) && !std::isalnum(static_cast<unsigned char>(ch));
+}
+
+char getRandomChar(std::ifstream& randFp) 
+{
+    char byte;
+    while (true) 
+    {
+        if (randFp.get(byte) && isPrintable(byte)) 
+        {
+            return byte;
+        }
+    }
+}
+
+std::string generateRandomPassword()
+{
+    std::ifstream randFp("/dev/urandom", std::ifstream::binary);
+    std::string password;
+
+    if (!randFp.is_open()) 
+    {
+        std::cerr << "Failed to open urandom file" << std::endl;
+        return "";
+    }
+
+    srand(time(nullptr)); // Seed for rand function
+
+    // Add one uppercase letter
+    password.push_back(getRandomChar(randFp));
+    while (!isUppercase(password[0])) 
+    {
+        password[0] = getRandomChar(randFp);
+    }
+
+    // Add one lowercase letter
+    password.push_back(getRandomChar(randFp));
+    while (!isLowercase(password[1])) 
+    {
+        password[1] = getRandomChar(randFp);
+    }
+
+    // Add one digit
+    password.push_back(getRandomChar(randFp));
+    while (!isDigit(password[2])) 
+    {
+        password[2] = getRandomChar(randFp);
+    }
+
+    // Add one special character
+    password.push_back(getRandomChar(randFp));
+    while (!isSpecialChar(password[3])) 
+    {
+        password[3] = getRandomChar(randFp);
+    }
+
+    // Fill the remaining 12 characters
+    for (size_t i = 4; i < 16; ++i) 
+    {
+        password.push_back(getRandomChar(randFp));
+    }
+
+    randFp.close();
+    std::random_shuffle(password.begin(), password.end()); // Shuffle characters
+
+    return password;
+}
+
+
 bool getAlphaNumString(std::string& uniqueStr)
 {
     std::ifstream randFp("/dev/urandom", std::ifstream::in);
@@ -5872,14 +5963,26 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
             return ipmi::responseResponseError();
         }
 
-        ret = getAlphaNumString(password);
+        /*ret = getAlphaNumString(password);
         if (!ret)
         {
             phosphor::logging::log<level::ERR>(
                 "ipmiGetBootStrapAccount: Failed to generate alphanumeric "
                 "Password");
             return ipmi::responseResponseError();
+        }*/
+
+        password = generateRandomPassword();
+
+        if (password.empty()) 
+        {
+            phosphor::logging::log<level::ERR>(
+            "ipmiGetBootStrapAccount: Failed to generate alphanumeric "
+            "Password");
+            return ipmi::responseResponseError();
         }
+
+
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
         std::string service = getService(*dbus, userMgrInterface,
                                          userMgrObjBasePath);
