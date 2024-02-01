@@ -502,6 +502,11 @@ inline static uint8_t getSensorEventTypeFromPath(const std::string& path)
         sensorEventType = static_cast<uint8_t>(
             std::get<SensorEventTypeCodes>(findSensor->second));
     }
+    else
+    {
+            //Support for additional reading types setting default to threshold
+            sensorEventType = 0x1; // reading type = threshold
+    }
     return sensorEventType;
 }
 
