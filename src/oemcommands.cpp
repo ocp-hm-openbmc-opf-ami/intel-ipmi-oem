@@ -54,6 +54,7 @@
 #include <xyz/openbmc_project/Network/FirewallConfiguration/server.hpp>
 #include <xyz/openbmc_project/Software/Activation/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
+#include <xyz/openbmc_project/USB/status/server.hpp>
 
 #include <algorithm>
 #include <array>
@@ -162,6 +163,10 @@ const static constexpr char* ipmiKcsService =
 constexpr auto systemDInterfaceUnit = "org.freedesktop.DBus.Properties";
 constexpr auto activeState = "active";
 constexpr auto activatingState = "activating";
+
+const static constexpr char* settingsService = "xyz.openbmc_project.Settings";
+const static constexpr char* settingsObjPath = "/xyz/openbmc_project/logging/settings";
+const static constexpr char* settingsUSBIntf = "xyz.openbmc_project.USB";
 
 // Task
 static constexpr auto taskIntf = "xyz.openbmc_project.Common.Task";
@@ -6109,6 +6114,84 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 }
 
+ipmi::RspType<> ipmiOEMEnDisPwrSaveMode(std::optional<uint8_t> req)
+{
+	int resp;
+	if (!req)
+    {
+        return ipmi::responseReqDataLenInvalid();
+		
+    }
+
+	if ( (*req) != 0 && (*req) != 1)
+	{
+		return ipmi::responseInvalidFieldRequest(); 
+	}
+
+
+	std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+	auto method = dbus->new_method_call(settingsService, settingsObjPath,
+					    settingsUSBIntf, "SetUSBPowerSaveMode");
+	
+	method.append(static_cast<int>(*req));
+	try
+	{
+		auto data = dbus->call(method);
+		data.read(resp);
+		if (resp == 0xC0 || resp < 0 )
+		{
+			phosphor::logging::log<phosphor::logging::level::ERR>(
+				"ipmiOEMEnDisPwrSaveMode: Error - Busy node or ioctl failed");
+			return ipmi::response(ipmi::ccBusy);
+		}
+		
+	}
+	catch (const sdbusplus::exception_t& e)
+    {
+
+		std::cerr << "SetUSBPowerSaveMode method call failed \n";
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+	return ipmi::responseSuccess();	
+}
+
+ipmi::RspType<uint8_t> ipmiOEMGetPwrSaveMode()
+{
+	int resp;
+	
+  	std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+  
+	auto method = dbus->new_method_call(settingsService, settingsObjPath,
+					    settingsUSBIntf, "GetUSBPowerSaveMode");
+
+	try
+    {
+        auto data = dbus->call(method);
+        data.read(resp);
+		if (resp == 0)
+		{
+			std::cerr << "virtual hub usb device connected to HOST \n";
+		}
+		else if (resp == 1)
+		{
+			std::cerr << "virtual hub usb device disconnected from HOST \n";
+		}
+		else if (resp == 0xC0 || resp < 0 )
+		{
+			phosphor::logging::log<phosphor::logging::level::ERR>(
+				"ipmiOEMGetPwrSaveMode: Error - Busy node or ioctl failed");
+			return ipmi::response(ipmi::ccBusy);
+		}
+    }
+    catch (sdbusplus::exception_t& e)
+    {
+        std::cerr << "GetUSBPowerSaveMode method call failed \n";
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+    return ipmi::responseSuccess(resp);
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -6411,6 +6494,16 @@ static void registerOEMFunctions(void)
                                ipmi::intel::misc::cmdGetManagerCertFingerPrint,
                                ipmi::Privilege::Admin,
                                ipmi::ipmiGetManagerCertFingerPrint);
+
+    // <Enable Disable Power Save Mode>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMEnDisPowerSaveMode, Privilege::Admin,
+                    ipmiOEMEnDisPwrSaveMode);
+
+    // <Get Power Save Mode>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetPowerSaveMode, Privilege::Admin,
+                    ipmiOEMGetPwrSaveMode);
 }
 
 } // namespace ipmi
