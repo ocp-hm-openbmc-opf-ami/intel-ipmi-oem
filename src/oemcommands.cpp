@@ -168,6 +168,9 @@ const static constexpr char* settingsService = "xyz.openbmc_project.Settings";
 const static constexpr char* settingsObjPath = "/xyz/openbmc_project/logging/settings";
 const static constexpr char* settingsUSBIntf = "xyz.openbmc_project.USB";
 
+const static constexpr char* snmpService = "xyz.openbmc_project.Snmp";
+const static constexpr char* snmpObjPath = "/xyz/openbmc_project/Snmp";
+const static constexpr char* snmpUtilsIntf = "xyz.openbmc_project.Snmp.SnmpUtils";
 // Task
 static constexpr auto taskIntf = "xyz.openbmc_project.Common.Task";
 static constexpr auto systemRoot = "/xyz/openbmc_project/";
@@ -6041,6 +6044,48 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
     }
 }
 
+
+ipmi::RspType<> ipmiOEMSetSNMPStatus([[maybe_unused]] ipmi::Context::ptr ctx,
+                                    bool reqData ,uint7_t reserved)
+{
+    if(reserved != 0)
+    {
+        return ipmi::responseInvalidFieldRequest();    
+    }
+
+    try
+    {
+
+        ipmi::setDbusProperty(ctx, snmpService, snmpObjPath,
+                snmpUtilsIntf, "SnmpTrapStatus",
+                static_cast<bool>(reqData));
+        return ipmi::responseSuccess();
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseResponseError();
+    }
+
+}
+
+
+ipmi::RspType<bool, uint7_t> ipmiOEMGetSNMPStatus(ipmi::Context::ptr ctx)
+{
+
+    bool status = 0;
+    try
+    {
+        ipmi::getDbusProperty(ctx, snmpService, snmpObjPath, snmpUtilsIntf, "SnmpTrapStatus", status);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseResponseError();
+    }
+
+    return ipmi::responseSuccess(status, 0);
+
+}
+
 ipmi::RspType<std::vector<uint8_t>>
     ipmiGetManagerCertFingerPrint(uint8_t certNum)
 {
@@ -6418,6 +6463,16 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMCancelTask, Privilege::User,
                     ipmiOEMCancelTask);
+
+    //<Set SNMP trap Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetSNMPStatus, Privilege::User,
+                    ipmiOEMSetSNMPStatus);
+
+    // <Get SNMP trap Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetSNMPstatus, Privilege::User,
+                    ipmiOEMGetSNMPStatus);
 
     // <Get USB Description>
     log<level::NOTICE>(

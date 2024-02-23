@@ -257,6 +257,8 @@ static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
 static constexpr Cmd cmdOEMCancelTask = 0xB1;
 static constexpr Cmd cmdOEMEnDisPowerSaveMode = 0xAA;
 static constexpr Cmd cmdOEMGetPowerSaveMode = 0xAB;
+static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
+static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
 
 namespace network
 {
