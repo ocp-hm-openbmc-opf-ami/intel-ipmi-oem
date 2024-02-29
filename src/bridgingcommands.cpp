@@ -424,8 +424,9 @@ ipmi::RspType<std::vector<uint8_t> // responseData
     switch (channelNo)
     {
         // we only handle ipmb for now
-        case targetChannelIpmb:
-        case targetChannelOtherLan:
+        case targetChannelIpmb1:
+        case targetChannelIpmb2:
+        case targetChannelIpmb3:
             if (msg.unpack(unpackMsg) || !msg.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();

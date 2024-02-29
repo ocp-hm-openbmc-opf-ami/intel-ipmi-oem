@@ -81,12 +81,13 @@ constexpr size_t ipmbMaxFrameLength = ipmbConnectionHeaderLength +
 /**
  * @brief Channel types
  */
-constexpr uint8_t targetChannelIpmb = 0x1;
+constexpr uint8_t targetChannelIpmb1 = 0x1;
+constexpr uint8_t targetChannelIpmb2 = 0x6;
+constexpr uint8_t targetChannelIpmb3 = 0xD;
 constexpr uint8_t targetChannelIcmb10 = 0x2;
 constexpr uint8_t targetChannelIcmb09 = 0x3;
 constexpr uint8_t targetChannelLan = 0x4;
 constexpr uint8_t targetChannelSerialModem = 0x5;
-constexpr uint8_t targetChannelOtherLan = 0x6;
 constexpr uint8_t targetChannelPciSmbus = 0x7;
 constexpr uint8_t targetChannelSmbus10 = 0x8;
 constexpr uint8_t targetChannelSmbus20 = 0x9;
