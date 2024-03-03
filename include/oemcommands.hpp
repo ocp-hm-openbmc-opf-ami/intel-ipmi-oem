@@ -396,6 +396,10 @@ static constexpr const uint8_t setHostSerialCfgCmd = 1;
 static constexpr const char* smtpclient = "xyz.openbmc_project.mail";
 static constexpr const char* smtpObj = "/xyz/openbmc_project/mail/alert";
 static constexpr const char* smtpIntf = "xyz.openbmc_project.mail.alert";
+static constexpr const char* smtpPrimaryIntf =
+    "xyz.openbmc_project.mail.alert.primary";
+static constexpr const char* smtpSecondaryIntf =
+    "xyz.openbmc_project.mail.alert.secondary";
 
 static constexpr const char* pefBus = "xyz.openbmc_project.pef.alert.manager";
 static constexpr const char* pefObj = "/xyz/openbmc_project/PefAlertManager";
@@ -425,8 +429,8 @@ static constexpr const uint8_t readCRC32AndSize = 0x01;
 static constexpr const uint8_t readCACertFile = 0x02;
 
 // SMTP Config parameters:
-static constexpr const uint8_t index_value = 0x01;
-static constexpr const uint8_t index_value2 = 0x02;
+static constexpr const uint8_t min_recipient = 0x01;
+static constexpr const uint8_t max_recipient = 0x04;
 
 enum class IPMINetfnIntelOEMAppCmd
 {
@@ -580,11 +584,16 @@ enum class dimmOffsetTypes : uint8_t
 
 enum class smtpSetting : uint8_t
 {
-    enable = 0x1,
-    ipAdd = 0x2,
-    port = 0x3,
-    senderMailId = 0x4,
-    recMailId = 0x5,
+    authentication = 0x1,
+    enable = 0x2,
+    ipAdd = 0x3,
+    passWord = 0x4,
+    port = 0x5,
+    recMailId = 0x6,
+    senderMailId = 0x7,
+    tlsEnable = 0x8,
+    userName = 0x9,
+
 };
 
 // FIXME: this stuff needs to be rewritten

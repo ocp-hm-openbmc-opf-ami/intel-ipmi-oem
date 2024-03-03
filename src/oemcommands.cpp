@@ -4002,90 +4002,45 @@ ipmi::RspType<uint8_t, uint8_t> ipmiOEMGetBufferSize()
     return ipmi::responseSuccess(kcsMaxBufferSize, ipmbMaxBufferSize);
 }
 
-bool getsmtpconfig(sdbusplus::bus::bus& bus,
-                   std::tuple<bool, std::string, uint16_t, std::string>& cfg)
-{
-    auto call = bus.new_method_call(smtpclient, smtpObj, smtpIntf,
-                                    "GetSmtpConfig");
-    try
-    {
-        auto data = bus.call(call);
-        data.read(cfg);
-    }
-    catch (sdbusplus::exception_t& e)
-    {
-        std::cerr << "GetSmtpConfig method call failed \n";
-        return false;
-    }
-
-    return true;
-}
-
-bool setrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string> rec)
+bool setrecaddress(ipmi::Context::ptr ctx, std::string smtpIntf,
+                   std::vector<std::string> rec)
 {
     std::variant<std::vector<std::string>> variantVectorValue = rec;
 
     try
     {
-        auto method = bus.new_method_call(pefBus, pefObj, dBusPropertyIntf,
-                                          "Set");
-        method.append(pefConfInfoIntf, "Recipient", variantVectorValue);
-
-        auto reply = bus.call(method);
+        boost::system::error_code ec;
+        ctx->bus->yield_method_call<void>(
+            ctx->yield, ec, smtpclient, smtpObj, dBusPropertyIntf,
+            dBusPropertySetMethod, smtpIntf, "Recipient", variantVectorValue);
     }
     catch (const std::exception& e)
     {
-        std::cerr << "DD05: seting reciptint method call failed\n";
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to set dbus property to Recipient");
         return false;
     }
     return true;
 }
 
-bool getrecaddress(sdbusplus::bus::bus& bus, std::vector<std::string>& rec)
+bool getrecaddress(ipmi::Context::ptr ctx, std::string smtpIntf,
+                   std::vector<std::string>& rec)
 {
-    boost::container::flat_map<
-        std::string,
-        std::variant<std::string, uint64_t, std::vector<std::string>>>
-        resp;
     try
     {
-        auto method = bus.new_method_call(pefBus, pefObj, dBusPropertyIntf,
-                                          "GetAll");
-        method.append(pefConfInfoIntf);
-        auto reply = bus.call(method);
-        reply.read(resp);
+        boost::system::error_code ec;
+        auto recpAdd = ctx->bus->yield_method_call<ipmi::DbusVariant>(
+            ctx->yield, ec, smtpclient, smtpObj, dBusPropertyIntf,
+            dBusPropertyGetMethod, smtpIntf, "Recipient");
+        rec = std::get<std::vector<std::string>>(recpAdd);
     }
     catch (const sdbusplus::exception_t&)
     {
-        std::cerr << "error getting Recipent  from " << pefBus << "\n";
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get Recipient Dbus property");
         return false;
     }
 
-    auto getRecipient = resp.find("Recipient");
-    if (getRecipient == resp.end())
-    {
-        return false;
-    }
-    rec = std::get<std::vector<std::string>>(getRecipient->second);
-    return true;
-}
-
-bool setsmtpconfig(sdbusplus::bus::bus& bus, bool enable, std::string host,
-                   uint16_t port, std::string send)
-{
-    try
-    {
-        auto call = bus.new_method_call(smtpclient, smtpObj, smtpIntf,
-                                        "SetSmtpConfig");
-
-        call.append(enable, host, port, send);
-        auto data = bus.call(call);
-    }
-    catch (sdbusplus::exception_t& e)
-    {
-        std::cerr << "SetSmtpConfigmethod call failed\n";
-        return false;
-    }
     return true;
 }
 
@@ -4095,43 +4050,58 @@ bool emailIdCheck(std::string email)
     return std::regex_match(email, pattern);
 }
 
-ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
-                                     uint8_t parameter, message::Payload& req)
+RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
+                               uint8_t parameter, message::Payload& req)
 {
-    std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
+    bool mailChk = false;
+    std::string smtpIntf{};
     std::vector<std::string> rec;
-    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    if (!getsmtpconfig(*bus, smtpcfg) || !getrecaddress(*bus, rec))
+    if (server == 0)
+    {
+        smtpIntf = smtpPrimaryIntf;
+    }
+    else
+    {
+        smtpIntf = smtpSecondaryIntf;
+    }
+    if (!(getrecaddress(ctx, smtpIntf, rec)))
     {
         return ipmi::responseUnspecifiedError();
     }
-    bool mailChk = false;
-    bool enabled = std::get<0>(smtpcfg);
-    std::string host = std::get<1>(smtpcfg);
-    uint16_t port = std::get<2>(smtpcfg);
-    std::string sender = std::get<3>(smtpcfg);
     switch (smtpSetting(parameter))
     {
-        case smtpSetting::enable:
+        case smtpSetting::authentication:
         {
-            std::array<uint8_t, 1> bytes;
-            if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
+            bool Authentication{};
+            if (req.unpack(Authentication) != 0)
             {
                 return responseReqDataLenInvalid();
             }
-            if (bytes[0] == 0x00)
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Authentication", Authentication))
             {
-                enabled = false;
+                return responseUnspecifiedError();
             }
-            else if (bytes[0] == 0x01)
+            return responseSuccess();
+        }
+        case smtpSetting::enable:
+        {
+            bool enable{};
+            if (req.unpack(enable) != 0)
             {
-                enabled = true;
+                return responseReqDataLenInvalid();
             }
-            break;
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Enable", enable))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
         }
         case smtpSetting::ipAdd:
         {
             std::array<uint8_t, 4> bytes;
+            std::string host;
             if (req.unpack(bytes) != 0 || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
@@ -4139,7 +4109,33 @@ ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
             host = std::to_string(bytes[0]) + "." + std::to_string(bytes[1]) +
                    "." + std::to_string(bytes[2]) + "." +
                    std::to_string(bytes[3]);
-            break;
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Host", host))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
+        }
+        case smtpSetting::passWord:
+        {
+            std::vector<char> reqData;
+            if (req.unpack(reqData) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+
+            if (reqData.size() > 64)
+            {
+                return responseReqDataLenInvalid();
+            }
+            std::string password(reqData.begin(), reqData.end());
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Password", password))
+            {
+                return responseUnspecifiedError();
+            }
+
+            return responseSuccess();
         }
         case smtpSetting::port:
         {
@@ -4155,8 +4151,42 @@ ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
             uint16_t smtpPort, smtpPortTmp;
             smtpPortTmp = bytes.at(0);
             smtpPort = ((smtpPortTmp << 8) | (bytes.at(1) & 0xff));
-            port = smtpPort;
-            break;
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Port", smtpPort))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
+        }
+        case smtpSetting::recMailId:
+        {
+            uint8_t index = 0;
+            std::vector<char> reqData;
+            std::vector<std::string> recp;
+            if (req.unpack(index, reqData) != 0)
+            {
+                return responseReqDataLenInvalid();
+            }
+            if (reqData.size() > 64)
+            {
+                return responseReqDataLenInvalid();
+            }
+            if ((index < min_recipient) || (index > max_recipient))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::string reci(reqData.begin(), reqData.end());
+            mailChk = emailIdCheck(reci);
+            if (mailChk == false)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            replace(rec.begin(), rec.end(), rec[index - 1], reci);
+            if (!setrecaddress(ctx, smtpIntf, rec))
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+            return responseSuccess();
         }
         case smtpSetting::senderMailId:
         {
@@ -4170,46 +4200,55 @@ ipmi::RspType<> ipmiOEMSetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
             {
                 return responseReqDataLenInvalid();
             }
-            std::string sen(reqData.begin(), reqData.end());
-            sender = sen;
+            std::string sender(reqData.begin(), reqData.end());
             mailChk = emailIdCheck(sender);
             if (mailChk == false)
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            break;
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Sender", sender))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
         }
-        case smtpSetting::recMailId:
+        case smtpSetting::tlsEnable:
         {
-            uint8_t index = 0;
-            std::vector<char> reqData;
-            if (req.unpack(index, reqData) != 0)
+            bool TLSEnable{};
+            if (req.unpack(TLSEnable) != 0)
             {
                 return responseReqDataLenInvalid();
             }
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "TLSEnable", TLSEnable))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
+        }
+        case smtpSetting::userName:
+        {
+            std::vector<char> reqData;
+            if (req.unpack(reqData) != 0 || !req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+
             if (reqData.size() > 64)
             {
                 return responseReqDataLenInvalid();
             }
-            std::string reci(reqData.begin(), reqData.end());
-            mailChk = emailIdCheck(reci);
-            if (mailChk == false)
+            std::string username(reqData.begin(), reqData.end());
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "UserName", username))
             {
-                return ipmi::responseInvalidFieldRequest();
-            }
-            replace(rec.begin(), rec.end(), rec[index - 1], reci);
-            if (!setrecaddress(*bus, rec))
-            {
-                return ipmi::responseUnspecifiedError();
+                return responseUnspecifiedError();
             }
             return responseSuccess();
         }
         default:
             return responseInvalidFieldRequest();
-    }
-    if (!setsmtpconfig(*bus, enabled, host, port, sender))
-    {
-        return ipmi::responseUnspecifiedError();
     }
     return responseSuccess();
 }
@@ -4226,21 +4265,22 @@ std::vector<uint8_t> convertToBytes(std::string data)
     return val;
 }
 
-ipmi::RspType<std::vector<uint8_t>>
-    ipmiOEMGetSmtpConfig([[maybe_unused]] ipmi::Context::ptr ctx,
-                         uint8_t parameter, message::Payload& req)
+ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
+                                                     uint8_t server,
+                                                     uint8_t parameter,
+                                                     message::Payload& req)
 {
-    std::tuple<bool, std::string, uint16_t, std::string> smtpcfg;
-    std::vector<std::string> rec;
-    std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-    if (!getsmtpconfig(*bus, smtpcfg) || !getrecaddress(*bus, rec))
+    message::Payload ret;
+    std::string smtpIntf{};
+    if (server == 0)
     {
-        return ipmi::responseUnspecifiedError();
+        smtpIntf = smtpPrimaryIntf;
     }
-    bool enabled = std::get<0>(smtpcfg);
-    std::string host = std::get<1>(smtpcfg);
-    uint16_t port = std::get<2>(smtpcfg);
-    std::string sender = std::get<3>(smtpcfg);
+    else
+    {
+        smtpIntf = smtpSecondaryIntf;
+    }
+    std::vector<uint8_t> resData = {};
     if (parameter != static_cast<uint8_t>(smtpSetting ::recMailId))
     {
         std::array<uint8_t, 0> bytes;
@@ -4249,25 +4289,40 @@ ipmi::RspType<std::vector<uint8_t>>
             return responseReqDataLenInvalid();
         }
     }
-
-    std::vector<uint8_t> resData = {};
     switch (smtpSetting(parameter))
     {
+
+        case smtpSetting::authentication:
+        {
+            bool Authentication{};
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Authentication", Authentication))
+            {
+                return responseUnspecifiedError();
+            }
+            ret.pack(Authentication, uint7_t{});
+            return responseSuccess(std::move(ret));
+        }
         case smtpSetting::enable:
         {
-            if (enabled == true)
+            bool enable{};
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Enable", enable))
             {
-                resData.push_back(0x01);
+                return responseUnspecifiedError();
             }
-            else if (enabled == false)
-            {
-                resData.push_back(0x00);
-            }
-            break;
+            ret.pack(enable, uint7_t{});
+            return responseSuccess(std::move(ret));
         }
         case smtpSetting::ipAdd:
         {
             std::vector<std::string> result;
+            std::string host;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Host", host))
+            {
+                return responseUnspecifiedError();
+            }
             if (!host.empty())
             {
                 boost::split(result, host, boost::is_any_of("."),
@@ -4284,46 +4339,103 @@ ipmi::RspType<std::vector<uint8_t>>
                 resData.push_back(ipByte2);
                 resData.push_back(ipByte3);
                 resData.push_back(ipByte4);
+                ret.pack(resData);
+                return responseSuccess(std::move(ret));
             }
-            break;
+            ret.pack(resData);
+            return responseSuccess(std::move(ret));
+        }
+        case smtpSetting::passWord:
+        {
+            std::string password;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Password", password))
+            {
+                return responseUnspecifiedError();
+            }
+            ret.pack(convertToBytes(password));
+            return responseSuccess(std::move(ret));
         }
         case smtpSetting::port:
         {
+            uint16_t port;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Port", port))
+            {
+                return responseUnspecifiedError();
+            }
             uint8_t portMsb = 0, portLsb = 0;
             portMsb = ((port >> 8) & 0xff);
             portLsb = (port & 0xff);
             resData.push_back(portMsb);
             resData.push_back(portLsb);
-            break;
-        }
-        case smtpSetting::senderMailId:
-        {
-            resData = convertToBytes(sender);
-            break;
+            ret.pack(resData);
+            return responseSuccess(std::move(ret));
         }
         case smtpSetting::recMailId:
         {
             uint8_t index = 0;
+            std::vector<std::string> recipient;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Recipient", recipient))
+            {
+                return responseUnspecifiedError();
+            }
+
             if (req.unpack(index) != 0)
             {
                 return responseReqDataLenInvalid();
             }
-            if (index != index_value && index != index_value2)
+
+            if ((index < min_recipient) || (index > max_recipient))
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            std::string str = rec[index - 1];
+            std::string str = recipient[index - 1];
             if (str.empty())
             {
                 return ipmi::responseResponseError();
             }
-            resData = convertToBytes(str);
-            break;
+            ret.pack(convertToBytes(str));
+            return responseSuccess(std::move(ret));
+        }
+        case smtpSetting::senderMailId:
+        {
+            std::string sender;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Sender", sender))
+            {
+                return responseUnspecifiedError();
+            }
+            ret.pack(convertToBytes(sender));
+            return responseSuccess(std::move(ret));
+        }
+        case smtpSetting::tlsEnable:
+        {
+            bool tls{};
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "TLSEnable", tls))
+            {
+                return responseUnspecifiedError();
+            }
+            ret.pack(tls, uint7_t{});
+            return responseSuccess(std::move(ret));
+        }
+        case smtpSetting::userName:
+        {
+            std::string username;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "UserName", username))
+            {
+                return responseUnspecifiedError();
+            }
+            ret.pack(convertToBytes(username));
+            return responseSuccess(std::move(ret));
         }
         default:
             return ipmi::responseInvalidFieldRequest();
     }
-    return ipmi::responseSuccess(resData);
+    return ipmi::responseInvalidFieldRequest();
 }
 
 ipmi::RspType<std::vector<uint8_t>>
