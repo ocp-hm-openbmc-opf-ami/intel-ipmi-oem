@@ -44,6 +44,9 @@
 
 static constexpr bool DEBUG = false;
 
+constexpr uint16_t InfoEventEntries = 2639;
+constexpr uint16_t ErrorEventEntries = 1000;
+
 using namespace phosphor::logging;
 using namespace ami::ipmi::sel;
 using ErrLevel = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
@@ -1376,7 +1379,8 @@ ipmi::RspType<uint8_t,  // SEL revision.
         }
     }
     constexpr uint8_t selVersion = ipmi::sel::selVersion;
-    uint16_t freeSpace = 0xffff;
+    uint16_t freeSpace = ((InfoEventEntries + ErrorEventEntries) - entries) *
+                         ipmi::sel::selRecordSize;
     constexpr uint3_t reserved{0};
 
     return ipmi::responseSuccess(

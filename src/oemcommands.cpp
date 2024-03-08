@@ -4060,10 +4060,15 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
     {
         smtpIntf = smtpPrimaryIntf;
     }
-    else
+    else if (server == 1)
     {
         smtpIntf = smtpSecondaryIntf;
     }
+    else
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
     if (!(getrecaddress(ctx, smtpIntf, rec)))
     {
         return ipmi::responseUnspecifiedError();
@@ -4276,10 +4281,15 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
     {
         smtpIntf = smtpPrimaryIntf;
     }
-    else
+    else if (server == 1)
     {
         smtpIntf = smtpSecondaryIntf;
     }
+    else
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
     std::vector<uint8_t> resData = {};
     if (parameter != static_cast<uint8_t>(smtpSetting ::recMailId))
     {
@@ -4375,6 +4385,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
         case smtpSetting::recMailId:
         {
             uint8_t index = 0;
+            std::array<uint8_t, 0> bytes;
             std::vector<std::string> recipient;
             if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
                                       "Recipient", recipient))
@@ -4382,7 +4393,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
                 return responseUnspecifiedError();
             }
 
-            if (req.unpack(index) != 0)
+            if (req.unpack(index, bytes) != 0 || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
             }
