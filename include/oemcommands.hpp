@@ -20,6 +20,7 @@
 #include <user_channel/user_layer.hpp>
 #define KCS_ENABLE 0x01
 #define KCS_DISABLE 0x00
+#define TRIGGER_SCREENSHOT_ENABLE 0x01
 namespace ipmi
 {
 namespace intel
@@ -259,6 +260,7 @@ static constexpr Cmd cmdOEMEnDisPowerSaveMode = 0xAA;
 static constexpr Cmd cmdOEMGetPowerSaveMode = 0xAB;
 static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
 static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
+static constexpr Cmd cmdOEMTriggerScreenShot = 0xD2;
 
 namespace network
 {
@@ -410,6 +412,14 @@ static constexpr const char* loggingSettingIntf =
     "xyz.openbmc_project.Logging.Settings";
 static constexpr const char* loggingSettingObjPath =
     "/xyz/openbmc_project/logging/settings";
+
+/*manual screenshot object in dbus*/
+static constexpr const char* TriggerScreenShotService =
+    "xyz.openbmc_project.Kvm";
+static constexpr const char* TriggerScreenShotIntf =
+    "xyz.openbmc_project.Kvm.ScreenShot";
+static constexpr const char* TriggerScreenShotObjPath =
+    "/xyz/openbmc_project/Kvm";
 
 // parameters:
 // 0: host serial port 1 and 2 normal speed

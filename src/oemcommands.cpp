@@ -6517,6 +6517,36 @@ ipmi::RspType<uint8_t> ipmiOEMGetPwrSaveMode()
     return ipmi::responseSuccess(resp);
 }
 
+/*TriggerScreenShot*/
+ipmi::RspType<> ipmiOEMTriggerScreenShot(ipmi::Context::ptr ctx,
+                                         uint8_t reqData)
+{
+    static bool TriggerProp{};
+
+    if (reqData == TRIGGER_SCREENSHOT_ENABLE)
+    {
+        TriggerProp = true;
+    }
+    else
+    {
+        return ipmi::responseReqDataLenInvalid();
+    }
+    try
+    {
+        ipmi::setDbusProperty(ctx, TriggerScreenShotService,
+                              TriggerScreenShotObjPath, TriggerScreenShotIntf,
+                              "Trigger", TriggerProp);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        log<level::ERR>("Failed to Set Trigger the Screenshot",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseResponseError();
+    }
+
+    return ipmi::responseSuccess();
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -6839,6 +6869,11 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetPowerSaveMode, Privilege::Admin,
                     ipmiOEMGetPwrSaveMode);
+
+    //<TriggerScreenShot>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMTriggerScreenShot, Privilege::User,
+                    ipmiOEMTriggerScreenShot);
 }
 
 } // namespace ipmi
