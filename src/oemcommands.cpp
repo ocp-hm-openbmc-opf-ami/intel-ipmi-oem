@@ -4535,6 +4535,93 @@ ipmi::RspType<std::vector<uint8_t>>
     }
 }
 
+int dateTimeCheck(std::string dateTime) {
+    std::vector<std::string> list, dateList, timeList;
+    boost::split(list, dateTime, boost::is_any_of("T"), boost::token_compress_on);
+    boost::split(dateList, list.at(0), boost::is_any_of("-"), boost::token_compress_on);
+    boost::split(timeList, list.at(1), boost::is_any_of(":"), boost::token_compress_on);
+
+
+    // Check Date
+    auto isLeap =  [] (int year)
+    {
+        return (year % 4) == 0 ? true : false;
+    };
+
+    if (std::stoi(dateList.at(1)) > 12 || std::stoi(dateList.at(1)) < 1) {
+        return 1;
+    }
+
+    if (std::stoi(dateList.at(2)) < 1) {
+        return 1;
+    }
+
+    if (std::stoi(dateList.at(1)) == 2) {
+        if (isLeap(std::stoi(dateList.at(0))) && std::stoi(dateList.at(2)) > 29 ) {
+            return 1;
+        } // if
+        else if (!isLeap(std::stoi(dateList.at(0))) && std::stoi(dateList.at(2)) > 28 ) {
+            return 1;
+        } // else if
+    } // if
+
+    if (std::stoi(dateList.at(1)) == 4 || std::stoi(dateList.at(1)) == 6 || 
+        std::stoi(dateList.at(1)) == 9 || std::stoi(dateList.at(1)) == 11 ) {
+        if (std::stoi(dateList.at(2)) > 30)
+            return 1;
+    } // if
+    else if (std::stoi(dateList.at(1)) == 1 || std::stoi(dateList.at(1)) == 3 || 
+             std::stoi(dateList.at(1)) == 5 || std::stoi(dateList.at(1)) == 7 ||
+             std::stoi(dateList.at(1)) == 8 || std::stoi(dateList.at(1)) == 10 ||
+             std::stoi(dateList.at(1)) == 12 ) {
+        if (std::stoi(dateList.at(2)) > 31)
+            return 1;
+    } // else if
+
+
+    // Check Time
+    if (std::stoi(timeList.at(0)) < 0 || std::stoi(timeList.at(0)) > 23) {
+        return -1;
+    }
+    if (std::stoi(timeList.at(1)) < 0 || std::stoi(timeList.at(1)) > 59) {
+        return -1;
+    }
+    if (std::stoi(timeList.at(2)) < 0 || std::stoi(timeList.at(2)) > 59) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int dateTimeCompare(std::string date1, std::string date2)
+{
+    std::vector<std::string> dateTimeList1, dateTimeList2;
+    std::vector<std::string> tmpList1, tmpList2;
+
+    boost::split(tmpList1, date1, boost::is_any_of("T"), boost::token_compress_on);
+    boost::split(tmpList2, date2, boost::is_any_of("T"), boost::token_compress_on);
+    boost::split(dateTimeList1, tmpList1.at(0), boost::is_any_of("-"), boost::token_compress_on);
+    boost::split(dateTimeList2, tmpList2.at(0), boost::is_any_of("-"), boost::token_compress_on);
+
+    for (auto i = 0; i < (int)dateTimeList1.size();i++) {
+        if (std::stoi(dateTimeList1.at(i)) > std::stoi(dateTimeList2.at(i)))
+            return -1;
+    }
+
+    dateTimeList1.clear();
+    dateTimeList2.clear();
+    boost::split(dateTimeList1, tmpList1.at(1), boost::is_any_of(":"), boost::token_compress_on);
+    boost::split(dateTimeList2, tmpList2.at(1), boost::is_any_of(":"), boost::token_compress_on);
+
+    for (auto i = 0; i < (int)dateTimeList1.size();i++) {
+        if (std::stoi(dateTimeList1.at(i)) > std::stoi(dateTimeList2.at(i)))
+            return -1;
+    }
+
+    return 0;
+
+}
+
 ipmi::RspType<message::Payload>
     ipmiOEMSetFirewallConfiguration(uint8_t parameter, message::Payload& req)
 {
@@ -4655,6 +4742,36 @@ ipmi::RspType<message::Payload>
                 return ipmi::responseResponseError();
             }
 
+            auto checkIPAddrOrder = [] (int type, std::string addr1, std::string addr2)
+            {
+                if (type == AF_INET) {
+                    in_addr compareAddr1, compareAddr2;
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                                (std::string("Incorrect IP Range. Start IP Address: ") + addr1 +  "End IP Address: "+addr2 +"\n").c_str());
+                    inet_pton(type, addr1.c_str(), &compareAddr1);
+                    inet_pton(type, addr2.c_str(), &compareAddr2);
+                    if (ntohl(compareAddr1.s_addr) > ntohl(compareAddr2.s_addr)) {
+                        return -1;
+                    } // if
+                    
+                    return 0;
+                } // if
+                else if (type == AF_INET6) {
+                    in6_addr compareAddr1, compareAddr2;
+                    inet_pton(type, addr1.c_str(), &compareAddr1);
+                    inet_pton(type, addr2.c_str(), &compareAddr2);
+                    for (int i = 0; i < 4; i++) {
+                        if (ntohl(compareAddr1.s6_addr32[i]) > ntohl(compareAddr2.s6_addr32[i])) {
+                            return 1;
+                        } // else if
+                    } // for
+
+                    return 0;
+                } // else if
+
+                return -1;
+            };
+
             if (static_cast<ami::general::network::SetFirewallOEMParam>(
                     parameter) == ami::general::network::SetFirewallOEMParam::
                                       PARAM_START_SOURCE_IP_ADDR)
@@ -4662,26 +4779,38 @@ ipmi::RspType<message::Payload>
                 if (!properties.endIPAddr.empty())
                 {
                     if ((isIPv4 &&
-                         properties.endIPAddr.find(":") == std::string::npos) ||
+                         properties.endIPAddr.find(":") != std::string::npos) ||
                         (!isIPv4 &&
-                         properties.endIPAddr.find(":") != std::string::npos))
+                         properties.endIPAddr.find(":") == std::string::npos))
                     {
                         return responseInvalidFieldRequest();
-                    }
+                    } // if
+                    else if (isIPv4 && checkIPAddrOrder(AF_INET, tmp, properties.endIPAddr) != 0) {
+                        return responseInvalidFieldRequest();
+                    } // else if
+                    else if (!isIPv4 && checkIPAddrOrder(AF_INET6, tmp, properties.endIPAddr) != 0) {
+                        return responseInvalidFieldRequest();
+                    } // else if
                 }
                 properties.startIPAddr = tmp;
             }
             else
             {
-                if (!properties.endIPAddr.empty())
+                if (!properties.startIPAddr.empty())
                 {
                     if ((isIPv4 &&
-                         properties.endIPAddr.find(":") == std::string::npos) ||
+                         properties.startIPAddr.find(":") != std::string::npos) ||
                         (!isIPv4 &&
-                         properties.endIPAddr.find(":") != std::string::npos))
+                         properties.startIPAddr.find(":") == std::string::npos))
                     {
                         return responseInvalidFieldRequest();
-                    }
+                    } // if
+                    else if (isIPv4 && checkIPAddrOrder(AF_INET, properties.startIPAddr, tmp) != 0) {
+                        return responseInvalidFieldRequest();
+                    } // else if
+                    else if (!isIPv4 && checkIPAddrOrder(AF_INET6, properties.startIPAddr, tmp) != 0) {
+                        return responseInvalidFieldRequest();
+                    } // else if
                 }
                 properties.endIPAddr = tmp;
             }
@@ -4703,11 +4832,19 @@ ipmi::RspType<message::Payload>
             std::memcpy(&port, portBytes.data(), portBytes.size());
             if (static_cast<ami::general::network::SetFirewallOEMParam>(
                     parameter) ==
-                ami::general::network::SetFirewallOEMParam::PARAM_START_PORT)
+                ami::general::network::SetFirewallOEMParam::PARAM_START_PORT) {
+                if (properties.endPort != 0 && properties.endPort < ntohs(port) ) {
+                    return responseReqDataLenInvalid();
+                } // if
                 properties.startPort = ntohs(port);
-            else
-                properties.endPort = ntohs(port);
+            }
+            else {
+                if (properties.startPort != 0 && properties.startPort > ntohs(port) ) {
+                    return responseReqDataLenInvalid();
+                } // if
 
+                properties.endPort = ntohs(port);
+            }
             properties.control |= static_cast<uint8_t>(
                 ami::general::network::FirewallFlags::PORT);
             return ipmi::responseSuccess();
@@ -4745,12 +4882,27 @@ ipmi::RspType<message::Payload>
             memset(tmp, 0, sizeof(tmp));
             snprintf(tmp, sizeof(tmp), "%04d-%02d-%02dT%02d:%02d:%02d",
                      ntohs(year), month, date, hour, min, sec);
+            if (dateTimeCheck(tmp))
+                return responseInvalidFieldRequest();
+
             if (static_cast<ami::general::network::SetFirewallOEMParam>(
                     parameter) ==
-                ami::general::network::SetFirewallOEMParam::PARAM_START_TIME)
+                ami::general::network::SetFirewallOEMParam::PARAM_START_TIME) {
+                if (!properties.endTime.empty() && 
+                     dateTimeCompare(tmp,properties.endTime) != 0) {
+                    return responseReqDataLenInvalid();
+                }
+
                 properties.startTime = tmp;
-            else
+            }
+            else {
+                if (!properties.startTime.empty() && 
+                     dateTimeCompare(properties.startTime, tmp) != 0) {
+                    return responseReqDataLenInvalid();
+                }
+
                 properties.endTime = tmp;
+            }
             properties.control |= static_cast<uint8_t>(
                 ami::general::network::FirewallFlags::TIMEOUT);
             return ipmi::responseSuccess();
@@ -4772,12 +4924,18 @@ ipmi::RspType<message::Payload>
                 {
                     properties.protocol = sdbusplus::xyz::openbmc_project::
                         Network::server::convertForMessage(
-                            FirewallIface::Protocol::UNSPECIFIED);
+                            FirewallIface::Protocol::ALL);
+                    properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL);
                 }
                 catch (const std::exception& e)
                 {
                     return ipmi::responseInvalidFieldRequest();
                 }
+            }
+
+            if (properties.protocol == sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::Protocol::UNSPECIFIED)) {
+                properties.protocol = sdbusplus::xyz::openbmc_project::Network::server::convertForMessage(FirewallIface::Protocol::ALL);
+                properties.control |= static_cast<uint8_t>(ami::general::network::FirewallFlags::PROTOCOL);
             }
 
             if (action == 0b01)
@@ -4797,10 +4955,12 @@ ipmi::RspType<message::Payload>
                     auto reply = dbus->call(method);
                     reply.read(retValue);
                     properties = {};
-                    if (retValue == 0)
+                    if (retValue == 0) {
                         return ipmi::responseSuccess();
-                    else
+                    }
+                    else {
                         return ipmi::responseResponseError();
+                    }
                 }
                 catch (const sdbusplus::exception_t& e)
                 {
@@ -5060,15 +5220,19 @@ ipmi::RspType<message::Payload>
             payload.pack(ret.startSec, ret.stopYear, ret.stopMonth,
                          ret.stopDate, ret.stopHour, ret.stopMin, ret.stopSec);
 
-            std::variant<in_addr, in6_addr> startAddr, stopAddr;
             if (static_cast<ami::general::network::GetFirewallOEMParam>(
                     parameter) ==
                 ami::general::network::GetFirewallOEMParam::PARAM_IPV4_RULE)
             {
                 std::string_view sv = startIPAddr;
-                sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
-                inet_pton(AF_INET, sv.data(), &startAddr);
-                inet_pton(AF_INET, endIPAddr.c_str(), &stopAddr);
+                in_addr startAddr, stopAddr;
+                memset(&startAddr, 0, sizeof(startAddr));
+                memset(&stopAddr, 0, sizeof(stopAddr));
+                if (sv.find_first_of("/") != std::string::npos)
+                    sv.remove_suffix(std::min(sv.size()-sv.find_first_of("/"), sv.size()));
+                inet_pton(AF_INET, std::string(sv).c_str(), &startAddr);
+                if (!endIPAddr.empty())
+                    inet_pton(AF_INET, endIPAddr.c_str(), &stopAddr);
                 payload.pack(
                     std::string_view{reinterpret_cast<const char*>(&startAddr),
                                      sizeof(in_addr)});
@@ -5078,9 +5242,13 @@ ipmi::RspType<message::Payload>
             else
             {
                 std::string_view sv = startIPAddr;
-                sv.remove_suffix(std::min(sv.find_first_of("/"), sv.size()));
-                inet_pton(AF_INET6, sv.data(), &startAddr);
-                inet_pton(AF_INET6, endIPAddr.c_str(), &stopAddr);
+                in6_addr startAddr, stopAddr;
+                memset(&startAddr, 0, sizeof(startAddr));
+                memset(&stopAddr, 0, sizeof(stopAddr));
+                sv.remove_suffix(std::min(sv.size()-sv.find_first_of("/"), sv.size()));
+                inet_pton(AF_INET6, std::string(sv).c_str(), &startAddr);
+                if (!endIPAddr.empty())
+                    inet_pton(AF_INET6, endIPAddr.c_str(), &stopAddr);
                 payload.pack(
                     std::string_view{reinterpret_cast<const char*>(&startAddr),
                                      sizeof(in6_addr)});
