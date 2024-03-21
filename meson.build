@@ -20,7 +20,6 @@ all_args = [
     '-DBOOST_COROUTINES_NO_DEPRECATION_WARNING',
     '-DBMC_VALIDATION_UNSECURE_FEATURE',
     '-DUSING_ENTITY_MANAGER_DECORATORS',
-    '-DIF_NON_INTEL_DISABLE',
     '-Wno-psabi',
     '-Wno-pedantic',
   ]
@@ -29,7 +28,6 @@ feature_map = {
   'intel-pfr': '-DINTEL_PFR_ENABLED',
   'bmc-validation-unsecure-feature': '-DBMC_VALIDATION_UNSECURE_FEATURE',
   'using-entity-manager-decorators': '-DUSING_ENTITY_MANAGER_DECORATORS',
-  'if-non-intel-disable' : '-DIF_NON_INTEL_DISABLE',
 }
 
 foreach option_key, option_value : feature_map
@@ -122,4 +120,8 @@ zinteloemcmds_lib = library(
 
 if get_option('tests').allowed()
   subdir('tests')
+endif
+
+if get_option('non-intel-platforms')
+   all_args +='-DIF_NON_INTEL_DISABLE'
 endif
