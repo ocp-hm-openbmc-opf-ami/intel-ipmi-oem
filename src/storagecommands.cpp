@@ -995,7 +995,7 @@ ipmi::RspType<uint8_t>
         {
             return ipmi::responseInvalidFieldRequest();
         }
-        countWritten = std::min(fruCache.size(), static_cast<size_t>(0xFF));
+        countWritten = std::min(dataToWrite.size(), static_cast<size_t>(0xFF));
     }
     else
     {
