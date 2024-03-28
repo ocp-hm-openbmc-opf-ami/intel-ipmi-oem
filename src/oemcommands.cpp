@@ -6517,6 +6517,83 @@ ipmi::RspType<uint8_t> ipmiOEMGetPwrSaveMode()
     return ipmi::responseSuccess(resp);
 }
 
+/*
+ * getHostStatus
+ * helper function for Get Host Status
+ */
+bool getHostStatus()
+{
+    bool HostStatus = false;
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    try
+    {
+        constexpr const char* HostStatePath =
+            "/xyz/openbmc_project/state/host0";
+        constexpr const char* HostStateIntf = "xyz.openbmc_project.State.Host";
+        auto service = ipmi::getService(*busp, HostStateIntf, HostStatePath);
+
+        ipmi::Value variant = ipmi::getDbusProperty(
+            *busp, service, HostStatePath, HostStateIntf, "CurrentHostState");
+        std::string HostState = std::get<std::string>(variant);
+        if (HostState == CurrentHostState)
+        {
+            HostStatus = true;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        log<level::ERR>("Failed to fetch power state property",
+                        entry("ERROR=%s", e.what()));
+        return false;
+    }
+    return HostStatus;
+}
+
+/*Trigger Screenshot*/
+ipmi::RspType<> ipmiOEMTriggerScreenshot()
+{
+    if (getHostStatus())
+    {
+        try
+        {
+            int32_t scrnshot = 1;
+            std::string resp;
+            sdbusplus::bus::bus bus(ipmid_get_sd_bus_connection());
+
+            std::string service = ipmi::getService(bus, TriggerScreenShotIntf,
+                                                   TriggerScreenShotObjPath);
+
+            auto methodCall =
+                bus.new_method_call(service.c_str(), TriggerScreenShotObjPath,
+                                    TriggerScreenShotIntf, "TriggerScreenshot");
+            methodCall.append(scrnshot);
+            auto reply = bus.call(methodCall);
+            reply.read(resp);
+
+            if (resp == "Success")
+            {
+                return ipmi::responseSuccess();
+            }
+            else if (resp == "Failure")
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            log<level::ERR>("Failed to Set Trigger the Screenshot",
+                            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    else
+    {
+        return ipmi::responseCommandNotAvailable();
+    }
+
+    return ipmi::responseSuccess();
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -6839,6 +6916,11 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetPowerSaveMode, Privilege::Admin,
                     ipmiOEMGetPwrSaveMode);
+
+    //<TriggerScreenshot>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMTriggerScreenshot, Privilege::User,
+                    ipmiOEMTriggerScreenshot);
 }
 
 } // namespace ipmi

@@ -257,6 +257,7 @@ static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
 static constexpr Cmd cmdOEMCancelTask = 0xB1;
 static constexpr Cmd cmdOEMEnDisPowerSaveMode = 0xAA;
 static constexpr Cmd cmdOEMGetPowerSaveMode = 0xAB;
+static constexpr Cmd cmdOEMTriggerScreenshot = 0xD2;
 static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
 static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
 
@@ -410,6 +411,17 @@ static constexpr const char* loggingSettingIntf =
     "xyz.openbmc_project.Logging.Settings";
 static constexpr const char* loggingSettingObjPath =
     "/xyz/openbmc_project/logging/settings";
+
+/*Manuall Trigger Screen Shot via d-bus obj*/
+static constexpr const char* TriggerScreenShotService =
+    "xyz.openbmc_project.Kvm";
+static constexpr const char* TriggerScreenShotObjPath =
+    "/xyz/openbmc_project/Kvm";
+static constexpr const char* TriggerScreenShotIntf =
+    "xyz.openbmc_project.Kvm.Screenshot";
+
+static constexpr const char* CurrentHostState =
+    "xyz.openbmc_project.State.Host.HostState.Running";
 
 // parameters:
 // 0: host serial port 1 and 2 normal speed
