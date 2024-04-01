@@ -88,6 +88,14 @@ ipmiallowlist = custom_target(
     command: [ prog_python, '@INPUT0@', '@INPUT1@', '@OUTPUT@' ],
     )
 
+generate_allowlist_script = files('generate-allowlist.py')
+ipmisyslock = custom_target(
+    'ipmi-systemlock.hpp',
+    input: [generate_allowlist_script, 'ipmi-systemlock.conf'],
+    output: 'ipmi-systemlock.hpp',
+    command: [ prog_python, '@INPUT0@', '@INPUT1@', '@OUTPUT@' ],
+    )
+
 zinteloemcmds_src = [
   'src/oemcommands.cpp',
   'src/sensorcommands.cpp',
@@ -106,6 +114,7 @@ zinteloemcmds_src = [
   'src/allowlist-filter.cpp',
   'src/fruutils.cpp',
   ipmiallowlist,
+  ipmisyslock,
 ]
 
 zinteloemcmds_lib = library(

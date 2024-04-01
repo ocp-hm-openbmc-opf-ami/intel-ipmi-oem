@@ -1,3 +1,5 @@
+#include "systemlock.hpp"
+
 #include <ipmi-allowlist.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
@@ -399,6 +401,12 @@ ipmi::Cc AllowlistFilter::filterMessage(ipmi::message::Request::ptr request)
                                              std::get<2>(first))
                    : first < value;
     });
+    //get the systemlock property value, 
+    //if  SystemLock is enabled (true) restrict all set commands to execute
+    if (getDbusSysLockProperty())
+    {
+        return filterSetCmdMessage(request);
+    }
 
     // no special handling for non-system-interface channels
     if (!(request->ctx->channel == ipmi::channelSystemIface ||

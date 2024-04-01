@@ -106,11 +106,12 @@ def output(entries, hppfile):
             " unsigned short>;"
         ),
         "",
-        "constexpr const std::array<netfncmd_tuple, {}> allowlist = ".format(
-            len(entries)
-        ),
-        "{{",
     ]
+    if hppfile == "ipmi-allowlist.hpp":
+        lines.append("constexpr const std::array<netfncmd_tuple, {}> allowlist = ".format(len(entries)))
+    elif hppfile == "ipmi-systemlock.hpp":
+        lines.append("constexpr const std::array<netfncmd_tuple, {}> setallowlist = ".format(len(entries)))
+    lines.append("{{")
     lines.extend(["    {}".format(e) for e in entries])
     lines.append("}};\n")
 
