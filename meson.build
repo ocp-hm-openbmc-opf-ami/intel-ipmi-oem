@@ -134,3 +134,10 @@ endif
 if get_option('non-intel-platforms')
    all_args +='-DIF_NON_INTEL_DISABLE'
 endif
+
+conf_data = configuration_data()
+conf_data.set10('IPMI_FIREWALL',get_option('ipmi-firewall'))
+ 
+configure_file(output: 'config.h',
+  configuration: conf_data
+)

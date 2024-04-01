@@ -1,4 +1,6 @@
+
 #include "systemlock.hpp"
+#include "config.h"
 
 #include <ipmi-allowlist.hpp>
 #include <ipmid/api.hpp>
@@ -412,13 +414,16 @@ ipmi::Cc AllowlistFilter::filterMessage(ipmi::message::Request::ptr request)
     if (!(request->ctx->channel == ipmi::channelSystemIface ||
           request->ctx->channel == channelSMM))
     {
-        if (!Allowlisted)
+        if (!IPMI_FIREWALL)
         {
-            log<level::INFO>("Channel/NetFn/Cmd not Allowlisted",
-                             entry("CHANNEL=0x%X", request->ctx->channel),
-                             entry("NETFN=0x%X", int(request->ctx->netFn)),
-                             entry("CMD=0x%X", int(request->ctx->cmd)));
-            return ipmi::ccInsufficientPrivilege;
+            if (!Allowlisted)
+            {
+                log<level::INFO>("Channel/NetFn/Cmd not Allowlisted",
+                                 entry("CHANNEL=0x%X", request->ctx->channel),
+                                 entry("NETFN=0x%X", int(request->ctx->netFn)),
+                                 entry("CMD=0x%X", int(request->ctx->cmd)));
+                return ipmi::ccInsufficientPrivilege;
+            }
         }
         return ipmi::ccSuccess;
     }
