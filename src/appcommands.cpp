@@ -232,16 +232,14 @@ std::optional<MetaRevision> convertIntelVersion(std::string& s)
         }
     }
     constexpr size_t matchedIntel = 7;
-    std::regex pattern2("(\\w+?)-(\\d+?).(\\d+?)[-.](\\d+?)-g(\\w+?)-(\\w+?)");
-    if (std::regex_match(s, results, pattern2))
+      std::regex pattern2("(\\w+?)-(\\d+?).(\\d+?)[-.]dev-(\\d+?)-g(\\w+?)-(\\w+?)"); //pattern2 support the dev tag
+      std::regex pattern3("(\\w+?)-(\\d+?).(\\d+?)[-.](\\d+?)-g(\\w+?)-(\\w+?)");   // pattern3 supports without dev tag
+    if (std::regex_match(s, results, pattern2) ||std::regex_match(s, results, pattern3))
     {
         if (results.size() == matchedIntel)
         {
             rev.platform = results[1];
-            std::string majorVer = results[2].str();
-            // Take only the last two digits of the major version
-            rev.major = static_cast<uint8_t>(
-                std::stoi(majorVer.substr(majorVer.size() - 2)));
+	    rev.major = static_cast<uint8_t>(std::stoi(results[2]));
             rev.minor = static_cast<uint8_t>(std::stoi(results[3]));
             rev.buildNo = static_cast<uint32_t>(std::stoi(results[4]));
             rev.openbmcHash = results[6];
