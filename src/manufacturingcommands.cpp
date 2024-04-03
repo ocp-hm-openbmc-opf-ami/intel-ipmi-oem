@@ -844,10 +844,13 @@ ipmi::Cc mfgFilterMessage(ipmi::message::Request::ptr request)
         case makeCmdKey(ipmi::netFnApp, ipmi::app::cmdMasterWriteRead):
             if (request->payload.size() > 4)
             {
-                // Allow write data count > 1 only in Special mode
-                if (mtm.getMfgMode() == SpecialMode::none)
+                if (!DISABLE_SPECIAL_MODE)
                 {
-                    return ipmi::ccInsufficientPrivilege;
+                    // Allow write data count > 1 only in Special mode
+                    if (mtm.getMfgMode() == SpecialMode::none)
+                    {
+                        return ipmi::ccInsufficientPrivilege;
+                    }
                 }
             }
             return ipmi::ccSuccess;
@@ -868,10 +871,13 @@ ipmi::Cc mfgFilterMessage(ipmi::message::Request::ptr request)
         case makeCmdKey(ipmi::netFnStorage, ipmi::storage::cmdWriteFruData):
         case makeCmdKey(ipmi::netFnOemTwo, ipmi::intel::platform::cmdClearCMOS):
 
-            // Check for Special mode
-            if (mtm.getMfgMode() == SpecialMode::none)
+            if (!DISABLE_SPECIAL_MODE)
             {
-                return ipmi::ccInvalidCommand;
+                // Check for Special mode
+                if (mtm.getMfgMode() == SpecialMode::none)
+                {
+                    return ipmi::ccInvalidCommand;
+                }
             }
             return ipmi::ccSuccess;
     }

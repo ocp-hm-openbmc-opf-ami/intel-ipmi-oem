@@ -15,6 +15,7 @@
 */
 
 #pragma once
+#include <config.h>
 
 #include <ipmid/api-types.hpp>
 #include <ipmid/utils.hpp>

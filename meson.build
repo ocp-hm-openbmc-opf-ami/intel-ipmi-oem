@@ -137,7 +137,8 @@ endif
 
 conf_data = configuration_data()
 conf_data.set10('IPMI_FIREWALL',get_option('ipmi-firewall'))
- 
+conf_data.set10('DISABLE_SPECIAL_MODE',get_option('disable-special-mode'))
+
 configure_file(output: 'config.h',
   configuration: conf_data
 )

@@ -4,3 +4,4 @@ option('bmc-validation-unsecure-feature', type: 'feature', description: 'Enables
 option('using-entity-manager-decorators', type: 'feature', description: 'Enable using EM decorators to map FRUs to entity IDs')
 option('non-intel-platforms' , type: 'boolean', description: 'If non-intel disable the get chassis power status handler.')
 option('ipmi-firewall', type: 'boolean',value:false, description: 'ipmi-firewall will only restrict the inband from getting executed and will not restrict outband IPMI commands which are not in allowlist file')
+option('disable-special-mode', type:'boolean', value: false,description: 'Disable special mode provisioning by enabling the disable-special-mode option.')
