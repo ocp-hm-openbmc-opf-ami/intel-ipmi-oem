@@ -73,6 +73,7 @@ constexpr static const uint32_t noTimestamp = 0xFFFFFFFF;
 static uint16_t sdrReservationID;
 static uint32_t sdrLastAdd = noTimestamp;
 static uint32_t sdrLastRemove = noTimestamp;
+static uint32_t sdrLastUpdate = noTimestamp;
 static constexpr size_t lastRecordIndex = 0xFFFF;
 
 // The IPMI spec defines four Logical Units (LUN), each capable of supporting
@@ -109,6 +110,7 @@ static sdbusplus::bus::match_t sensorAdded(
     sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
+    sdrLastUpdate = sdrLastAdd;
 });
 
 static sdbusplus::bus::match_t sensorRemoved(
@@ -120,6 +122,7 @@ static sdbusplus::bus::match_t sensorRemoved(
     sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch())
                         .count();
+    sdrLastUpdate = sdrLastRemove;
 });
 
 // this keeps track of deassertions for sensor event status command. A
@@ -2104,6 +2107,25 @@ ipmi::RspType<uint16_t,            // next record ID
 
     return ipmi::responseSuccess(nextRecordId, recordData);
 }
+
+// Get SDR Repository Time
+ipmi::RspType<uint32_t> // current time
+    ipmiStorageGetSDRRepositoryTime(ipmi::Context::ptr ctx)
+{
+    if (!getSensorSubtree(sensorTree) && sensorTree.empty())
+    {
+        return ipmi::responseResponseError();
+    }
+
+    size_t fruCount = 0;
+    ipmi::Cc ret = ipmi::storage::getFruSdrCount(ctx, fruCount);
+    if (ret != ipmi::ccSuccess)
+    {
+        return ipmi::response(ret);
+    }
+
+    return ipmi::responseSuccess(sdrLastUpdate);
+}
 /* end storage commands */
 
 void registerSensorFunctions()
@@ -2181,5 +2203,11 @@ void registerSensorFunctions()
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
                           ipmi::storage::cmdGetSdr, ipmi::Privilege::User,
                           ipmiStorageGetSDR);
+
+    // <Get SDR Repository Time>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
+                          ipmi::storage::cmdGetSdrRepositoryTime,
+                          ipmi::Privilege::User,
+                          ipmiStorageGetSDRRepositoryTime);
 }
 } // namespace ipmi
