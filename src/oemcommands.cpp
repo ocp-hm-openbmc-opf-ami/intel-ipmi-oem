@@ -14,6 +14,7 @@
 // limitations under the License.
 */
 
+#include "ipmid/net_utility.hpp"
 #include "types.hpp"
 #include "xyz/openbmc_project/Common/error.hpp"
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
@@ -45,6 +46,8 @@
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/bus.hpp>
 #include <sdbusplus/message/types.hpp>
+#include <stdplus/net/addr/subnet.hpp>
+#include <stdplus/raw.hpp>
 #include <xyz/openbmc_project/Chassis/Control/NMISource/server.hpp>
 #include <xyz/openbmc_project/Control/Boot/Mode/server.hpp>
 #include <xyz/openbmc_project/Control/Boot/Source/server.hpp>
@@ -4050,6 +4053,18 @@ bool emailIdCheck(std::string email)
     return std::regex_match(email, pattern);
 }
 
+template <typename T>
+static T unpackT(ipmi::message::Payload& req)
+{
+    std::array<uint8_t, sizeof(T)> bytes;
+    if (req.unpack(bytes) != 0)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Invalid Length of Data");
+    }
+    return stdplus::raw::copyFrom<T>(bytes);
+};
+
 RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
                                uint8_t parameter, message::Payload& req)
 {
@@ -4253,6 +4268,28 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
             }
             return responseSuccess();
         }
+        case smtpSetting::ipAddv6:
+        {
+            std::string host;
+            auto ip = unpackT<stdplus::In6Addr>(req);
+            if (!req.fullyUnpacked())
+            {
+                return responseReqDataLenInvalid();
+            }
+            if (!ipmi::utility::ip_address::isValidIPv6Addr(
+                    (in6_addr*)(&ip.__in6_u),
+                    ipmi::utility::ip_address::Type::IP6_ADDRESS))
+            {
+                return responseInvalidFieldRequest();
+            }
+            host = stdplus::toStr(stdplus::In6Addr{ip});
+            if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Host", host))
+            {
+                return responseUnspecifiedError();
+            }
+            return responseSuccess();
+        }
         default:
             return responseInvalidFieldRequest();
     }
@@ -4443,6 +4480,22 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
                 return responseUnspecifiedError();
             }
             ret.pack(convertToBytes(username));
+            return responseSuccess(std::move(ret));
+        }
+        case smtpSetting::ipAddv6:
+        {
+            std::string host;
+            if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
+                                      "Host", host))
+            {
+                return responseUnspecifiedError();
+            }
+            if (!host.empty())
+            {
+                stdplus::In6Addr addr{};
+                addr = stdplus::fromStr<stdplus::In6Addr>(host);
+                ret.pack(stdplus::raw::asView<char>(addr));
+            }
             return responseSuccess(std::move(ret));
         }
         default:

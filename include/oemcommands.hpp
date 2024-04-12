@@ -613,6 +613,7 @@ enum class smtpSetting : uint8_t
     senderMailId = 0x7,
     tlsEnable = 0x8,
     userName = 0x9,
+    ipAddv6 = 0x0a,
 
 };
 
