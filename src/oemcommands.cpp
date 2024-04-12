@@ -4094,9 +4094,14 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
         case smtpSetting::authentication:
         {
             bool Authentication{};
-            if (req.unpack(Authentication) != 0)
+            uint7_t rsvd{};
+            if (req.unpack(Authentication, rsvd) || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
+            }
+            if (rsvd != 0)
+            {
+                return responseInvalidFieldRequest();
             }
             if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
                                       "Authentication", Authentication))
@@ -4108,9 +4113,14 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
         case smtpSetting::enable:
         {
             bool enable{};
-            if (req.unpack(enable) != 0)
+            uint7_t rsvd{};
+            if (req.unpack(enable, rsvd) || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
+            }
+            if (rsvd != 0)
+            {
+                return responseInvalidFieldRequest();
             }
             if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
                                       "Enable", enable))
@@ -4237,9 +4247,14 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
         case smtpSetting::tlsEnable:
         {
             bool TLSEnable{};
-            if (req.unpack(TLSEnable) != 0)
+            uint7_t rsvd{};
+            if (req.unpack(TLSEnable, rsvd) || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
+            }
+            if (rsvd != 0)
+            {
+                return responseInvalidFieldRequest();
             }
             if (ipmi::setDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
                                       "TLSEnable", TLSEnable))
