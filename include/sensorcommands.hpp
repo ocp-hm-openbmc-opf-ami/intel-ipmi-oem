@@ -144,7 +144,7 @@ static ipmi_ret_t
     path = getPathFromSensorNumber((ctx->lun << 8) | sensnum);
     if (path.empty())
     {
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return IPMI_CC_SENSOR_INVALID;
     }
 
     for (const auto& sensor : sensorTree)
