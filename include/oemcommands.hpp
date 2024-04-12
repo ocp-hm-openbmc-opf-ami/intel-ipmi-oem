@@ -20,6 +20,8 @@
 #include <user_channel/user_layer.hpp>
 #define KCS_ENABLE 0x01
 #define KCS_DISABLE 0x00
+
+
 namespace ipmi
 {
 namespace intel
@@ -443,6 +445,12 @@ static constexpr const uint8_t readCACertFile = 0x02;
 // SMTP Config parameters:
 static constexpr const uint8_t min_recipient = 0x01;
 static constexpr const uint8_t max_recipient = 0x04;
+
+enum class ServerType
+{
+    SMTP_PRIMARY,
+    SMTP_SECONDARY,
+};
 
 enum class IPMINetfnIntelOEMAppCmd
 {

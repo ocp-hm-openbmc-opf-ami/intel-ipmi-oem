@@ -4056,13 +4056,19 @@ RspType<> ipmiOEMSetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
     bool mailChk = false;
     std::string smtpIntf{};
     std::vector<std::string> rec;
-    if (server == 0)
+    if (static_cast<uint8_t>(server) ==
+        static_cast<uint8_t>(ServerType::SMTP_PRIMARY))
     {
         smtpIntf = smtpPrimaryIntf;
     }
-    else
+    else if (static_cast<uint8_t>(server) ==
+             static_cast<uint8_t>(ServerType::SMTP_SECONDARY))
     {
         smtpIntf = smtpSecondaryIntf;
+    }
+    else
+    {
+        return ipmi::responseInvalidFieldRequest();
     }
     if (!(getrecaddress(ctx, smtpIntf, rec)))
     {
@@ -4272,13 +4278,19 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
 {
     message::Payload ret;
     std::string smtpIntf{};
-    if (server == 0)
+    if (static_cast<uint8_t>(server) ==
+        static_cast<uint8_t>(ServerType::SMTP_PRIMARY))
     {
         smtpIntf = smtpPrimaryIntf;
     }
-    else
+    else if (static_cast<uint8_t>(server) ==
+             static_cast<uint8_t>(ServerType::SMTP_SECONDARY))
     {
         smtpIntf = smtpSecondaryIntf;
+    }
+    else
+    {
+        return ipmi::responseInvalidFieldRequest();
     }
     std::vector<uint8_t> resData = {};
     if (parameter != static_cast<uint8_t>(smtpSetting ::recMailId))
@@ -4375,6 +4387,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
         case smtpSetting::recMailId:
         {
             uint8_t index = 0;
+            std::array<uint8_t, 0> bytes;
             std::vector<std::string> recipient;
             if (ipmi::getDbusProperty(ctx, smtpclient, smtpObj, smtpIntf,
                                       "Recipient", recipient))
@@ -4382,7 +4395,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
                 return responseUnspecifiedError();
             }
 
-            if (req.unpack(index) != 0)
+            if ((req.unpack(index, bytes) != 0) || (!req.fullyUnpacked()))
             {
                 return responseReqDataLenInvalid();
             }
