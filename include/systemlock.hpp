@@ -49,11 +49,14 @@ ipmi::Cc filterSetCmdMessage(ipmi::message::Request::ptr request)
                                                  std::get<2>(first))
                        : first < value;
         });
-    if (setAllowlisted)
+    if (request->ctx->channel != ipmi::channelSystemIface)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Channel/NetFn/Cmd not Allowlisted");
-        return ipmi::ccCommandDisabled;
+        if (setAllowlisted)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Channel/NetFn/Cmd not Allowlisted");
+            return ipmi::ccCommandDisabled;
+        }
     }
     return ipmi::ccSuccess;
 }
