@@ -1646,7 +1646,9 @@ ipmi::RspType<uint16_t // deleted record ID
         return ipmi::responseSensorInvalid();
     }
     SELCacheMap::const_iterator iter;
+
     uint16_t delRecordID = 0;
+
     if (selRecordID == ipmi::sel::firstEntry)
     {
         delRecordID = selCacheMap.begin()->first;
@@ -1657,12 +1659,13 @@ ipmi::RspType<uint16_t // deleted record ID
     }
     else
     {
-        iter = selCacheMap.find(selRecordID);
-        if (iter == selCacheMap.end())
-        {
-            return ipmi::responseSensorInvalid();
-        }
         delRecordID = selRecordID;
+    }
+
+    iter = selCacheMap.find(delRecordID);
+    if (iter == selCacheMap.end())
+    {
+        return ipmi::responseSensorInvalid();
     }
 
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
@@ -1681,8 +1684,11 @@ ipmi::RspType<uint16_t // deleted record ID
 
     auto methodCall = bus.new_method_call(service.c_str(), objPath.c_str(),
                                           ipmi::sel::logDeleteIntf, "Delete");
-    auto reply = bus.call(methodCall);
-    if (reply.is_method_error())
+    try
+    {
+        auto reply = bus.call(methodCall);
+    }	
+    catch (const std::exception& e)
     {
         return ipmi::responseUnspecifiedError();
     }
