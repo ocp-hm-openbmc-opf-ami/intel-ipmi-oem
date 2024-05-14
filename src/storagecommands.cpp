@@ -47,6 +47,10 @@ static constexpr bool DEBUG = false;
 constexpr uint16_t InfoEventEntries = 2639;
 constexpr uint16_t ErrorEventEntries = 1000;
 
+constexpr uint8_t EntireReadLength = 0xFF;
+constexpr uint8_t OffsetStartByte = 0x00;
+constexpr uint8_t EntireRecordData = 0x10;
+
 using namespace phosphor::logging;
 using namespace ami::ipmi::sel;
 using ErrLevel = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
@@ -1392,28 +1396,10 @@ ipmi::RspType<uint8_t,  // SEL revision.
         ipmi::sel::operationSupport::overflow);
 }
 
-using systemEventType = std::tuple<
-    uint32_t, // Timestamp
-    uint16_t, // Generator ID
-    uint8_t,  // EvM Rev
-    uint8_t,  // Sensor Type
-    uint8_t,  // Sensor Number
-    uint7_t,  // Event Type
-    bool,     // Event Direction
-    std::array<uint8_t, intel_oem::ipmi::sel::systemEventSize>>; // Event Data
-using oemTsEventType = std::tuple<
-    uint32_t,                                                    // Timestamp
-    std::array<uint8_t, intel_oem::ipmi::sel::oemTsEventSize>>;  // Event Data
-using oemEventType =
-    std::array<uint8_t, intel_oem::ipmi::sel::oemEventSize>;     // Event Data
-
-ipmi::RspType<uint16_t, // Next Record ID
-              uint16_t, // Record ID
-              uint8_t,  // Record Type
-              std::variant<systemEventType, oemTsEventType,
-                           oemEventType>> // Record Content
+ipmi::RspType<uint16_t,             // Next Record ID
+              std::vector<uint8_t>> // Response data
     ipmiStorageGetSELEntry(uint16_t reservationID, uint16_t selRecordID,
-                          [[maybe_unused]] uint8_t offset,[[maybe_unused]] uint8_t readLength)
+                           uint8_t offset, uint8_t readLength)
 {
     if (reservationID != 0)
     {
@@ -1474,22 +1460,53 @@ ipmi::RspType<uint16_t, // Next Record ID
         record.nextRecordID = iter->first;
     }
 
-    bool eventDir = record.event.eventRecord.eventType >> 7;
-    uint7_t eventType = record.event.eventRecord.eventType;
-    std::array<uint8_t, 3> eventData{record.event.eventRecord.eventData1,
-                                     record.event.eventRecord.eventData2,
-                                     record.event.eventRecord.eventData3};
-    return ipmi::responseSuccess(
-        static_cast<uint16_t>(record.nextRecordID),
-        static_cast<uint16_t>(record.event.eventRecord.recordID),
-        static_cast<uint8_t>(record.event.eventRecord.recordType),
-        systemEventType{
-            static_cast<uint32_t>(record.event.eventRecord.timeStamp),
-            static_cast<uint8_t>(record.event.eventRecord.generatorID),
-            static_cast<uint8_t>(record.event.eventRecord.eventMsgRevision),
-            static_cast<uint8_t>(record.event.eventRecord.sensorType),
-            static_cast<uint8_t>(record.event.eventRecord.sensorNum), eventType,
-            eventDir, eventData});
+    // Extracting bytes from different fields of the record structure for
+    // serialization
+    uint8_t recordIDByte1 = (record.event.eventRecord.recordID >> 8) & 0xFF;
+    uint8_t recordIDByte2 = record.event.eventRecord.recordID & 0xFF;
+    uint8_t timeStampByte1 = (record.event.eventRecord.timeStamp >> 24) & 0xFF;
+    uint8_t timeStampByte2 = (record.event.eventRecord.timeStamp >> 16) & 0xFF;
+    uint8_t timeStampByte3 = (record.event.eventRecord.timeStamp >> 8) & 0xFF;
+    uint8_t timeStampByte4 = record.event.eventRecord.timeStamp & 0xFF;
+    uint8_t generatorIDByte1 = (record.event.eventRecord.generatorID >> 8) &
+                               0xFF;
+    uint8_t generatorIDByte2 = record.event.eventRecord.generatorID & 0xFF;
+
+    std::vector<uint8_t> result = {recordIDByte2,
+                                   recordIDByte1,
+                                   record.event.eventRecord.recordType,
+                                   timeStampByte4,
+                                   timeStampByte3,
+                                   timeStampByte2,
+                                   timeStampByte1,
+                                   generatorIDByte2,
+                                   generatorIDByte1,
+                                   record.event.eventRecord.eventMsgRevision,
+                                   record.event.eventRecord.sensorType,
+                                   record.event.eventRecord.sensorNum,
+                                   record.event.eventRecord.eventType,
+                                   record.event.eventRecord.eventData1,
+                                   record.event.eventRecord.eventData2,
+                                   record.event.eventRecord.eventData3};
+
+    std::vector<uint8_t> response(EntireRecordData);
+    if ((offset == OffsetStartByte) && (readLength == EntireReadLength))
+    {
+        std::copy(result.begin(), result.end(), response.begin());
+    }
+    else if ((readLength + offset) <= EntireRecordData)
+    {
+        std::copy(result.begin() + offset, result.begin() + offset + readLength,
+                  response.begin());
+        response.resize(readLength);
+    }
+    else
+    {
+        return ipmi::responseInvalidReservationId();
+    }
+
+    return ipmi::responseSuccess(static_cast<uint16_t>(record.nextRecordID),
+                                 response);
 }
 
 ipmi::RspType<uint16_t>
