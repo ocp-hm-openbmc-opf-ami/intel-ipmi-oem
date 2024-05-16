@@ -1,7 +1,10 @@
 
-#include "systemlock.hpp"
+
 #include "config.h"
 
+#include "systemlock.hpp"
+
+#include <blocklist.hpp>
 #include <ipmi-allowlist.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
@@ -52,6 +55,8 @@ class AllowlistFilter
     // than the RestrictionModes D-Bus interface; use aliases
     static constexpr RestrictionMode::Modes restrictionModeAllowAll =
         RestrictionMode::Modes::Provisioning;
+    static constexpr RestrictionMode::Modes restrictionBlockMode =
+        RestrictionMode::Modes::Blacklist;
     static constexpr RestrictionMode::Modes restrictionModeRestricted =
         RestrictionMode::Modes::ProvisionedHostWhitelist;
     static constexpr RestrictionMode::Modes restrictionModeDenyAll =
@@ -458,6 +463,11 @@ ipmi::Cc AllowlistFilter::filterMessage(ipmi::message::Request::ptr request)
         {
             // Deny All
             Allowlisted = false;
+            break;
+        }
+        case restrictionBlockMode:
+        {
+            return filterblocklistcmdMessage(request);
             break;
         }
         default: // for Allowlist and Blocklist
