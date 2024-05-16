@@ -811,6 +811,14 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
             break;
         }
     }
+    if (fruCache.empty())
+    {
+        // when fruCache is empty assume eemprom is empty and append with max
+        // fru file size 256
+        std::vector<uint8_t> emptyFru(0xff, 0xff);
+        std::copy(emptyFru.begin(), emptyFru.end(),
+                  std::back_inserter(fruCache));
+    }
 
     if (!foundFru)
     {
