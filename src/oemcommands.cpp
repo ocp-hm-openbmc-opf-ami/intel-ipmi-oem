@@ -163,8 +163,7 @@ const static constexpr char* systemDService = "org.freedesktop.systemd1";
 const static constexpr char* systemDObjPath = "/org/freedesktop/systemd1";
 const static constexpr char* systemDMgrIntf =
     "org.freedesktop.systemd1.Manager";
-const static constexpr char* ipmiKcsService =
-    "phosphor-ipmi-kcs@ipmi_kcs3.service";
+const std::string ipmiKcsService = "phosphor-ipmi-kcs@ipmi_kcs3.service";
 constexpr auto systemDInterfaceUnit = "org.freedesktop.DBus.Properties";
 constexpr auto activeState = "active";
 constexpr auto activatingState = "activating";
@@ -5654,29 +5653,47 @@ ipmi::RspType<uint8_t>
     }
     catch (const sdbusplus::exception_t& e)
     {
-        return ipmi::responseResponseError();
+        return ipmi::responseSuccess(static_cast<uint8_t>(KCSStatus::Disable));
     }
 }
 
-ipmi::RspType<> ipmiOEMSetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx,
-                                    uint8_t reqData)
+ipmi::RspType<> ipmiOEMSetKCSStatus(ipmi::Context::ptr ctx, uint8_t reqData)
 {
-    if (reqData == KCS_ENABLE || reqData == KCS_DISABLE)
+    constexpr bool runtimeOnly = false;
+    constexpr bool force = false;
+
+    if (reqData == static_cast<uint8_t>(KCSStatus::Disable))
     {
-        try
-        {
-            auto dbus = getSdBus();
-            auto method = dbus->new_method_call(
-                systemDService, systemDObjPath, systemDMgrIntf,
-                reqData ? "StartUnit" : "StopUnit");
-            method.append(ipmiKcsService, "replace");
-            auto reply = dbus->call(method);
-            return ipmi::responseSuccess();
-        }
-        catch (const sdbusplus::exception_t& e)
-        {
-            return ipmi::responseResponseError();
-        }
+        auto dbus = getSdBus();
+        auto method = dbus->new_method_call(systemDService, systemDObjPath,
+                                            systemDMgrIntf, "StopUnit");
+        method.append(ipmiKcsService, "replace");
+        auto reply = dbus->call(method);
+
+        // Append additional method call for disabling the unit
+        boost::system::error_code ec;
+        ctx->bus->yield_method_call(
+            ctx->yield, ec, systemDService, systemDObjPath, systemDMgrIntf,
+            "DisableUnitFiles",
+            std::array<const char*, 1>{ipmiKcsService.c_str()}, runtimeOnly);
+        return ipmi::responseSuccess();
+    }
+    else if (reqData == static_cast<uint8_t>(KCSStatus::Enable))
+    {
+
+        boost::system::error_code ec;
+        ctx->bus->yield_method_call(
+            ctx->yield, ec, systemDService, systemDObjPath, systemDMgrIntf,
+            "EnableUnitFiles",
+            std::array<const char*, 1>{ipmiKcsService.c_str()}, runtimeOnly,
+            force);
+
+        auto dbus = getSdBus();
+        auto method = dbus->new_method_call(systemDService, systemDObjPath,
+                                            systemDMgrIntf, "StartUnit");
+        method.append(ipmiKcsService, "replace");
+        auto reply = dbus->call(method);
+        return ipmi::responseSuccess();
     }
 
     else
