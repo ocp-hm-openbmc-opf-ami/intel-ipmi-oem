@@ -30,6 +30,8 @@
 #include <sys/ioctl.h>
 #include <systemd/sd-journal.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <grp.h>
 
 #include <appcommands.hpp>
 #include <boost/algorithm/string.hpp>
@@ -6312,6 +6314,29 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
                 "ipmiGetBootStrapAccount: Credential BootStrapping Disabled "
                 "Get BootStrap Account command rejected.");
             return ipmi::responseSuccess();
+        }
+
+        struct group* gr = getgrent();
+        int num_of_accounts = 0;
+        while(gr != nullptr)
+        {
+            if(strcmp(gr->gr_name,"redfish-hostiface") == 0)
+            {
+                while(gr->gr_mem[num_of_accounts] != nullptr)
+                {
+                    num_of_accounts++;
+                }
+		break;
+            }
+            gr = getgrent();
+        }
+        endgrent();
+
+        if (num_of_accounts >= 5)
+        {
+            phosphor::logging::log<level::ERR>(
+                "ipmiGetBootStrapAccount: Max HI user limit is reached");
+            return ipmi::responseResponseError();
         }
 
         std::string userName;
