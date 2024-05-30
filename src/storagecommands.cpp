@@ -629,7 +629,20 @@ void recalculateHashes()
     devicePath.clear();
     // hash the object paths to create unique device id's. increment on
     // collision
-    std::hash<std::string> hasher;
+
+    using GetSubTreePathsType = std::vector<std::string>;
+    auto bus = getSdBus();
+    auto message = bus->new_method_call("xyz.openbmc_project.ObjectMapper",
+                                        "/xyz/openbmc_project/object_mapper",
+                                        "xyz.openbmc_project.ObjectMapper",
+                                        "GetSubTreePaths");
+    message.append("/", 0,
+                   std::array<const char*, 1>{
+                       "xyz.openbmc_project.Inventory.Item.FruConfig"});
+    GetSubTreePathsType idPaths;
+    auto reply = bus->call(message);
+    reply.read(idPaths);
+
     for (const auto& fru : frus)
     {
         auto fruIface = fru.second.find("xyz.openbmc_project.FruDevice");
@@ -659,6 +672,8 @@ void recalculateHashes()
         }
 
         uint8_t fruHash = 0;
+
+        std::hash<std::string> hasher;
         if (chassisType.compare(chassisTypeRackMount) != 0)
         {
             fruHash = hasher(fru.first.str);
@@ -668,6 +683,63 @@ void recalculateHashes()
                 fruHash = 1;
             }
         }
+        for (const auto& path : idPaths)
+        {
+            std::map<std::string, DbusVariant> properties;
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+            sdbusplus::message_t getProperties = dbus->new_method_call(
+                "xyz.openbmc_project.FruDevice", path.c_str(),
+                "org.freedesktop.DBus.Properties", "GetAll");
+            getProperties.append(
+                "xyz.openbmc_project.Inventory.Item.FruConfig");
+            try
+            {
+                sdbusplus::message_t response = dbus->call(getProperties);
+                response.read(properties);
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "GetAll Failed";
+                continue;
+            }
+            auto configBus = properties.find("Bus");
+            auto configAddr = properties.find("Address");
+            uint8_t confBus;
+            uint8_t confAddr;
+
+            if (configBus == properties.end() || configAddr == properties.end())
+            {
+                std::cerr << "Failed to find Bus and Address\n";
+                continue;
+            }
+            else
+            {
+                if (auto busValue = std::get_if<uint8_t>(&configBus->second);
+                    busValue != nullptr)
+                {
+                    if (auto addrValue =
+                            std::get_if<uint8_t>(&configAddr->second);
+                        addrValue != nullptr)
+                    {
+                        confBus = *busValue;
+                        confAddr = *addrValue;
+                    }
+                }
+            }
+            if ((static_cast<uint8_t>(fruBus) == confBus) &&
+                (static_cast<uint8_t>(fruAddr) == confAddr))
+            {
+                auto fruIdIter = properties.find("FruId");
+                if (fruIdIter != properties.end())
+                {
+                    auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
+                    fruHash = static_cast<uint8_t>(*fruIdValue);
+                    break;
+                }
+            }
+        }
+
         std::pair<uint16_t, uint8_t> newDev(fruBus, fruAddr);
 
         bool emplacePassed = false;
@@ -851,7 +923,7 @@ void startMatch(void)
         return;
     }
 
-    fruMatches.reserve(2);
+    fruMatches.reserve(3);
 
     auto bus = getSdBus();
     fruMatches.emplace_back(*bus,
@@ -903,7 +975,21 @@ void startMatch(void)
         recalculateHashes();
         lastDevId = 0xFF;
     });
+    fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
+                            [](sdbusplus::message::message& message) {
+                                sdbusplus::message::object_path path;
+                                ObjectType object;
+                                try
+                                {
+                                    message.read(path, object);
+                                }
+                                catch (const sdbusplus::exception_t&)
+                                {
+                                    return;
+                                }
 
+                                recalculateHashes();
+                            });
     // call once to populate
     boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
         replaceCacheFru(getSdBus(), yield);
