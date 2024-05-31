@@ -56,9 +56,9 @@ class AllowlistFilter
     static constexpr RestrictionMode::Modes restrictionModeAllowAll =
         RestrictionMode::Modes::Provisioning;
     static constexpr RestrictionMode::Modes restrictionBlockMode =
-        RestrictionMode::Modes::Blacklist;
+        RestrictionMode::Modes::Blocklist;
     static constexpr RestrictionMode::Modes restrictionModeRestricted =
-        RestrictionMode::Modes::ProvisionedHostWhitelist;
+        RestrictionMode::Modes::ProvisionedHostAllowlist;
     static constexpr RestrictionMode::Modes restrictionModeDenyAll =
         RestrictionMode::Modes::ProvisionedHostDisabled;
 

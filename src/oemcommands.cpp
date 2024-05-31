@@ -5328,7 +5328,8 @@ ipmi::RspType<message::Payload>
                 in6_addr startAddr, stopAddr;
                 memset(&startAddr, 0, sizeof(startAddr));
                 memset(&stopAddr, 0, sizeof(stopAddr));
-                sv.remove_suffix(std::min(sv.size()-sv.find_first_of("/"), sv.size()));
+		if (sv.find_first_of("/") != std::string::npos)
+                    sv.remove_suffix(std::min(sv.size()-sv.find_first_of("/"), sv.size()));
                 inet_pton(AF_INET6, std::string(sv).c_str(), &startAddr);
                 if (!endIPAddr.empty())
                     inet_pton(AF_INET6, endIPAddr.c_str(), &stopAddr);
