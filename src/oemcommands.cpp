@@ -6701,6 +6701,62 @@ ipmi::RspType<> ipmiOEMTriggerScreenshot()
     return ipmi::responseSuccess();
 }
 
+/** @brief implementes Setting KVM Session Timeout
+ *  @param[in] sessionTimeout - KVM Session Timeout
+ *  @returns ipmi completion code.
+ */
+ipmi::RspType<uint8_t> ipmiOEMSetSessionTimeout(uint32_t sessionTimeout)
+{
+    uint64_t value = static_cast<uint64_t>(sessionTimeout);
+    if (value < minSessionTimeOut || value > maxSessionTimeOut)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+
+    try
+    {
+        ipmi::setDbusProperty(*busp, serviceManagerService,
+                              serviceMgrKvmObjPath, serviceConfigInterface,
+                              "SessionTimeOut", value);
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to set SessionTimeOut value",
+            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess();
+}
+
+/** @brief implementes to Get KVM Session Timeout
+ *  @returns IPMI completion code with following data
+ *   - KVM Session Timeout in Seconds.(four bytes)
+ */
+ipmi::RspType<uint32_t> ipmiOEMGetSessionTimeout()
+{
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    uint64_t sessionTimeOut = 0;
+    try
+    {
+        auto value = ipmi::getDbusProperty(
+            *dbus, serviceManagerService, serviceMgrKvmObjPath,
+            serviceConfigInterface, "SessionTimeOut");
+
+        sessionTimeOut = std::get<uint64_t>(value);
+    }
+    catch (std::exception& e)
+    {
+        log<level::ERR>("Failed to get SessionTimeOut value",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+    return ipmi::responseSuccess(static_cast<uint32_t>(sessionTimeOut));
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -7028,6 +7084,16 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMTriggerScreenshot, Privilege::User,
                     ipmiOEMTriggerScreenshot);
+
+    // <Set KVM Session Timeout>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetSessionTimeout, Privilege::Admin,
+                    ipmiOEMSetSessionTimeout);
+
+    // <Get KVM Session Timeout>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetSessionTimeout, Privilege::Admin,
+                    ipmiOEMGetSessionTimeout);
 }
 
 } // namespace ipmi

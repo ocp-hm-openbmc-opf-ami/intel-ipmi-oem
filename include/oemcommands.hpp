@@ -262,6 +262,8 @@ static constexpr Cmd cmdOEMGetPowerSaveMode = 0xAB;
 static constexpr Cmd cmdOEMTriggerScreenshot = 0xD2;
 static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
 static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
+static constexpr Cmd cmdOEMSetSessionTimeout = 0xd3;
+static constexpr Cmd cmdOEMGetSessionTimeout = 0xd4;
 
 namespace network
 {
@@ -424,6 +426,18 @@ static constexpr const char* TriggerScreenShotIntf =
 
 static constexpr const char* CurrentHostState =
     "xyz.openbmc_project.State.Host.HostState.Running";
+
+/*Serice Config Manager D-bus details*/
+static constexpr const char* serviceManagerService =
+    "xyz.openbmc_project.Control.Service.Manager";
+static constexpr const char* serviceMgrKvmObjPath =
+    "/xyz/openbmc_project/control/service/start_2dipkvm";
+static constexpr const char* serviceConfigInterface =
+    "xyz.openbmc_project.Control.Service.Attributes";
+
+// session timeout in seconds
+static constexpr const uint64_t minSessionTimeOut = 30;
+static constexpr const uint64_t maxSessionTimeOut = 86400;
 
 // parameters:
 // 0: host serial port 1 and 2 normal speed
