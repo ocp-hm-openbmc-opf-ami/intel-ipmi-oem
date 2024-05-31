@@ -264,6 +264,7 @@ static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
 static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
 static constexpr Cmd cmdOEMSetSessionTimeout = 0xd3;
 static constexpr Cmd cmdOEMGetSessionTimeout = 0xd4;
+static constexpr Cmd cmdOEMClearSessionInfo = 0xd5;
 
 namespace network
 {
@@ -438,6 +439,14 @@ static constexpr const char* serviceConfigInterface =
 // session timeout in seconds
 static constexpr const uint64_t minSessionTimeOut = 30;
 static constexpr const uint64_t maxSessionTimeOut = 86400;
+
+/* Session Management D-bus details*/
+static constexpr const char* sessionManagerService =
+    "xyz.openbmc_project.SessionManager";
+static constexpr const char* sessionManagerObjPath =
+    "/xyz/openbmc_project/SessionManager";
+static constexpr const char* sessionManagerIntf =
+    "xyz.openbmc_project.SessionManager";
 
 // parameters:
 // 0: host serial port 1 and 2 normal speed

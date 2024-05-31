@@ -6757,6 +6757,37 @@ ipmi::RspType<uint32_t> ipmiOEMGetSessionTimeout()
     return ipmi::responseSuccess(static_cast<uint32_t>(sessionTimeOut));
 }
 
+/** @brief implementes To Clear KVM Session Information
+ *  @returns ipmi completion code.
+ */
+ipmi::RspType<uint8_t> ipmiOEMClearSessionInfo()
+{
+    bool resp;
+
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+    auto method = dbus->new_method_call(sessionManagerService,
+                                        sessionManagerObjPath,
+                                        sessionManagerIntf, "Clear");
+
+    try
+    {
+        auto data = dbus->call(method);
+        data.read(resp);
+        if (resp == false)
+        {
+            return ipmi::response(ipmi::ccUnspecifiedError);
+        }
+    }
+    catch (sdbusplus::exception_t& e)
+    {
+        log<level::ERR>("Failed to Clear Session Information",
+                        phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+    return ipmi::responseSuccess();
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -7094,6 +7125,11 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetSessionTimeout, Privilege::Admin,
                     ipmiOEMGetSessionTimeout);
+
+    // <Clear Session Information>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMClearSessionInfo, Privilege::Admin,
+                    ipmiOEMClearSessionInfo);
 }
 
 } // namespace ipmi
