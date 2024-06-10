@@ -28,6 +28,7 @@
 #include <boost/container/flat_map.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
+#include <phosphor-ipmi-host/selutility.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/bus.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
@@ -507,15 +508,13 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
         return ipmi::responseInvalidFieldRequest();
     }
     //adding event message to SEL
-    std::vector<uint8_t> eventData{eventData1, eventData2.value_or(0xFF),eventData3.value_or(0xFF)};
+    std::vector<uint8_t> eventData{eventData1, eventData2.value_or(0xFF),
+                                   eventData3.value_or(0xFF)};
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
 
     static constexpr auto systemRecordType = 0x02;
     std::string messageID = "";
-    std::stringstream stream;
-    stream << std::hex << std::uppercase << std::setfill('0');
-    stream << std::setw(2) << static_cast<int>(eventData[0]);
-    auto selDataStr = stream.str();
+    auto selDataStr = ipmi::sel::toHexStr(eventData);
 
     std::map<std::string, std::string> addData;
     addData["SENSOR_DATA"] = selDataStr.c_str();
