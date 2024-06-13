@@ -1497,7 +1497,15 @@ ipmi::RspType<uint16_t,             // Next Record ID
     ipmiStorageGetSELEntry(uint16_t reservationID, uint16_t selRecordID,
                            uint8_t offset, uint8_t readLength)
 {
-    if (reservationID != 0)
+    auto ispartialread = [](uint8_t offset, uint8_t readLength) -> bool {
+        if (offset != 0 || (offset + readLength) < EntireRecordData)
+        {
+            return true;
+        }
+        return false;
+    };
+
+    if (reservationID != 0 || ispartialread(offset, readLength))
     {
         if (!checkSELReservation(reservationID))
         {
@@ -1598,7 +1606,7 @@ ipmi::RspType<uint16_t,             // Next Record ID
     }
     else
     {
-        return ipmi::responseInvalidReservationId();
+        return ipmi::responseParmOutOfRange();
     }
 
     return ipmi::responseSuccess(static_cast<uint16_t>(record.nextRecordID),
