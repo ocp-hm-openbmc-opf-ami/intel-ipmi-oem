@@ -880,6 +880,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             {
                 return ipmi::responseInvalidFieldRequest();
             }
+            auto value = findLower->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Lower Critical Threshold Value Setting");
+                return ipmi::responseInvalidFieldRequest();
+            }
             thresholdsToSet.emplace_back("CriticalLow", lowerCritical,
                                          findThreshold->first);
         }
@@ -888,6 +897,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             auto findUpper = findThreshold->second.find("CriticalHigh");
             if (findUpper == findThreshold->second.end())
             {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            auto value = findUpper->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Upper Critical Threshold Value Setting");
                 return ipmi::responseInvalidFieldRequest();
             }
             thresholdsToSet.emplace_back("CriticalHigh", upperCritical,
@@ -909,6 +927,16 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             {
                 return ipmi::responseInvalidFieldRequest();
             }
+            auto value = findLower->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Lower Non Critical Threshold Value Setting");
+                return ipmi::responseInvalidFieldRequest();
+            }
+
             thresholdsToSet.emplace_back("WarningLow", lowerNonCritical,
                                          findThreshold->first);
         }
@@ -917,6 +945,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             auto findUpper = findThreshold->second.find("WarningHigh");
             if (findUpper == findThreshold->second.end())
             {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            auto value = findUpper->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Upper Non Critical Threshold Value Setting");
                 return ipmi::responseInvalidFieldRequest();
             }
             thresholdsToSet.emplace_back("WarningHigh", upperNonCritical,
