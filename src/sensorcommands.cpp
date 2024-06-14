@@ -451,7 +451,7 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     ipmi::ChannelInfo chInfo;
     std::string sensorPath;
     bool assert = false;
-    
+
     if (ipmi::getChannelInfo(ctx->channel, chInfo) != ipmi::ccSuccess)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -535,6 +535,7 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
         addSEL.append(redfishMessage, sensorPath.c_str(), eventData, assert,
                       generatorID, addData);
         bus->call(addSEL);
+        cancelSELReservation();
     }
     catch (const std::exception& e)
     {
