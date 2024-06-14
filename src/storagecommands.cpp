@@ -1712,6 +1712,10 @@ ipmi::RspType<uint8_t> ipmiStorageClearSEL(uint16_t reservationID,
         return ipmi::responseSuccess(
             static_cast<uint8_t>(ipmi::sel::eraseComplete));
     }
+    if (eraseOperation != ipmi::sel::initiateErase)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
     // Per the IPMI spec, need to cancel any reservation when the SEL is cleared
     cancelSELReservation();
 
