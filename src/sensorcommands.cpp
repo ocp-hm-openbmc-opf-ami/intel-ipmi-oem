@@ -567,6 +567,10 @@ ipmi::RspType< uint8_t,     //sensor type
      try
      {
          sensorPath = getPathFromSensorNumber(SensorNum);
+         if (sensorPath.empty())
+         {
+             return ipmi::response(ccSensorInvalid);
+         }
          sensorType = getSensorTypeFromPath(sensorPath);
          eventType = getSensorEventTypeFromPath(sensorPath);
 
@@ -794,6 +798,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         return ipmi::responseInvalidFieldRequest();
     }
 
+    std::string connection;
+    std::string path;
+
+    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
+    if (status)
+    {
+        return ipmi::response(status);
+    }
+
     if (reserved)
     {
         return ipmi::responseInvalidFieldRequest();
@@ -813,14 +826,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         return ipmi::responseSuccess();
     }
 
-    std::string connection;
-    std::string path;
-
-    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
-    if (status)
-    {
-        return ipmi::response(status);
-    }
     SensorMap sensorMap;
     if (!getSensorMap(ctx->yield, connection, path, sensorMap))
     {
@@ -2074,7 +2079,6 @@ ipmi::RspType<uint16_t,            // next record ID
     ipmiStorageGetSDR(ipmi::Context::ptr ctx, uint16_t reservationID,
                       uint16_t recordID, uint8_t offset, uint8_t bytesToRead)
 {
-    constexpr Cc ccSensorInvalid = 0xCB;
     size_t fruCount = 0;
     // reservation required for partial reads with non zero offset into
     // record
@@ -2109,7 +2113,7 @@ ipmi::RspType<uint16_t,            // next record ID
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "ipmiStorageGetSDR: fail to get SDR");
-        return ipmi::responseInvalidFieldRequest();
+        return response(ccSensorInvalid);
     }
     get_sdr::SensorDataRecordHeader* hdr =
         reinterpret_cast<get_sdr::SensorDataRecordHeader*>(record.data());
