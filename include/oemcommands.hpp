@@ -247,6 +247,7 @@ static constexpr NetFn netFnGeneral = netFnOemTwo;
 
 namespace general
 {
+static constexpr Cmd cmdOEMSetHealthStatus = 0x2c;
 static constexpr Cmd cmdOEMSetFirewallConfiguration = 0x76;
 static constexpr Cmd cmdOEMGetFirewallConfiguration = 0x77;
 static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
@@ -522,6 +523,11 @@ static constexpr const uint8_t readCACertFile = 0x02;
 static constexpr const uint8_t min_recipient = 0x01;
 static constexpr const uint8_t max_recipient = 0x04;
 
+static constexpr const char* healthStatusInterface =
+    "xyz.openbmc_project.Common.Status";
+const std::map<uint8_t, std::string> healthmap{
+    {0x00, "OK"}, {0x01, "Warning"}, {0x02, "Critical"}};
+
 enum class ServerType
 {
     SMTP_PRIMARY,
@@ -691,6 +697,13 @@ enum class smtpSetting : uint8_t
     userName = 0x9,
     ipAddv6 = 0x0a,
 
+};
+
+enum class resourceTypes : uint8_t
+{
+    processor = 0x01,
+    memory = 0x02,
+    pcieDevice = 0x03,
 };
 
 // FIXME: this stuff needs to be rewritten

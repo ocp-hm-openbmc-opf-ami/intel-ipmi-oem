@@ -20,6 +20,7 @@
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
 
 #include <fcntl.h>
+#include <grp.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
 #include <netinet/ether.h>
@@ -28,10 +29,9 @@
 #include <openssl/x509.h>
 #include <security/pam_appl.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <systemd/sd-journal.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <grp.h>
 
 #include <appcommands.hpp>
 #include <boost/algorithm/string.hpp>
@@ -45,6 +45,7 @@
 #include <ipmid/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <oemcommands.hpp>
+#include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/bus.hpp>
 #include <sdbusplus/message/types.hpp>
@@ -6021,6 +6022,59 @@ ipmi::RspType<uint8_t, uint8_t> ipmiGetRedfishServicePort()
     return ipmi::responseSuccess(msb, lsb);
 }
 
+ipmi::RspType<> ipmiOEMSetHealthStatus([[maybe_unused]] uint8_t dbNumber,
+                                       uint8_t resource, uint8_t health,
+                                       message::Payload& req)
+{
+    std::string inventoryPath =
+        "/xyz/openbmc_project/inventory/system/chassis/";
+
+    std::vector<char> reqData;
+    if (req.unpack(reqData) != 0)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
+    std::string devInstance(reqData.begin(), reqData.end());
+    auto healthItr = healthmap.find(health);
+    if (healthItr == healthmap.end())
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    std::string healthString = healthItr->second;
+
+    switch (resourceTypes(resource))
+    {
+        case resourceTypes::processor:
+        case resourceTypes::memory:
+            inventoryPath += "motherboard/" + devInstance;
+            break;
+        case resourceTypes::pcieDevice:
+            inventoryPath += "pciedevice/" + devInstance;
+            break;
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    try
+    {
+        ipmi::setDbusProperty(*busp, "xyz.openbmc_project.OOBInventoryConfig",
+                              inventoryPath.c_str(), healthStatusInterface,
+                              "Health", healthString.c_str());
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        lg2::error("Failed to update {RESOURCE}  Health Status", "RESOURCE",
+                   devInstance.c_str());
+        return ipmi::responseUnspecifiedError();
+    }
+    lg2::info("Updated {RESOURCE} Health Status", "RESOURCE",
+              devInstance.c_str());
+
+    return ipmi::responseSuccess();
+}
+
 static bool getCredentialBootStrap()
 {
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
@@ -7430,6 +7484,12 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMClearSessionInfo, Privilege::Admin,
                     ipmiOEMClearSessionInfo);
+
+   // <Set Health Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetHealthStatus, Privilege::User,
+                    ipmiOEMSetHealthStatus);
+
 }
 
 } // namespace ipmi
