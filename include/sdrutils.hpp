@@ -387,6 +387,7 @@ enum class SensorTypeCodes : uint8_t
     os = 0x20,
     acpisystem = 0x22,
     watchdog2 = 0x23,
+    managementsubsystemhealth = 0x28,
     battery = 0x29,
     other = 0xB,
 };
@@ -436,6 +437,9 @@ const static boost::container::flat_map<
                                   SensorEventTypeCodes::threshold)},
          {"chassisstate", std::make_pair(SensorTypeCodes::powerunit,
                                          SensorEventTypeCodes::digitalState)},
+         {"bmcfirmwarehealth",
+          std::make_pair(SensorTypeCodes::managementsubsystemhealth,
+                         SensorEventTypeCodes::sensorSpecified)},
          {"acpidevice", std::make_pair(SensorTypeCodes::powersupply,
                                        SensorEventTypeCodes::acpiDevice)}}};
 
