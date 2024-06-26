@@ -1015,6 +1015,11 @@ ipmi::RspType<uint8_t,             // Count
         return ipmi::responseInvalidFieldRequest();
     }
 
+    if (countToRead == 0)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
     ipmi::Cc status = getFru(ctx, fruDeviceId);
 
     if (status != ipmi::ccSuccess)
@@ -1065,6 +1070,11 @@ ipmi::RspType<uint8_t>
     }
 
     size_t writeLen = dataToWrite.size();
+
+    if (!writeLen)
+    {
+        return ipmi::responseReqDataLenInvalid();
+    }
 
     ipmi::Cc status = getFru(ctx, fruDeviceId);
     if (status != ipmi::ccSuccess)
