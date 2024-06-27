@@ -264,6 +264,10 @@ static constexpr Cmd cmdOEMSetSNMPStatus = 0xC1;
 static constexpr Cmd cmdOEMGetSNMPstatus = 0xC2;
 static constexpr Cmd cmdOEMSetSessionTimeout = 0xd3;
 static constexpr Cmd cmdOEMGetSessionTimeout = 0xd4;
+static constexpr Cmd cmdSetBmcServiceStatus = 0xE1;
+static constexpr Cmd cmdGetBmcServiceStatus = 0xE2;
+static constexpr Cmd cmdSetBmcServicePortValue = 0xE3;
+static constexpr Cmd cmdGetBmcServicePortValue = 0xE4;
 static constexpr Cmd cmdOEMClearSessionInfo = 0xd5;
 
 namespace network
@@ -439,6 +443,58 @@ static constexpr const char* serviceConfigInterface =
 // session timeout in seconds
 static constexpr const uint64_t minSessionTimeOut = 30;
 static constexpr const uint64_t maxSessionTimeOut = 86400;
+
+// control BMC services
+static constexpr uint8_t webServiceBitPos = 0;
+static constexpr uint8_t sshServiceBitPos = 1;
+static constexpr uint8_t ipmbServiceBitPos = 2;
+static constexpr uint8_t solS0ServiceBitPos = 3;
+static constexpr uint8_t solS1ServiceBitPos = 4;
+static constexpr uint8_t solS2ServiceBitPos = 5;
+static constexpr uint8_t solS3ServiceBitPos = 6;
+static constexpr uint8_t ipmiKcsBridge3ServiceBitPos = 7;
+static constexpr uint8_t ipmiKcsBridge4ServiceBitPos = 8;
+static constexpr uint8_t rmcpBond0ServiceBitPos = 9;
+static constexpr uint8_t rmcpEth0ServiceBitPos = 10;
+static constexpr uint8_t rmcpEth1ServiceBitPos = 11;
+static constexpr uint8_t rmcpUsb0ServiceBitPos = 12;
+static constexpr uint8_t kvmServiceBitPos = 13;
+static constexpr uint8_t virtualMediaServiceBitPos = 14;
+
+static constexpr uint16_t maxServiceBit = 0x7FFF;
+static constexpr uint16_t maxPortValue = 0xFFFF;
+
+static constexpr std::array<std::pair<uint8_t, const char*>, 15> bmcService = {{
+    // {bit position for service, service name}
+    {webServiceBitPos, "bmcweb"},
+    {sshServiceBitPos, "dropbear"},
+    {ipmbServiceBitPos, "ipmb"},
+    {solS0ServiceBitPos, "obmc_2dconsole_40ttyS0"},
+    {solS1ServiceBitPos, "obmc_2dconsole_40ttyS1"},
+    {solS2ServiceBitPos, "obmc_2dconsole_40ttyS2"},
+    {solS3ServiceBitPos, "obmc_2dconsole_40ttyS3"},
+    {ipmiKcsBridge3ServiceBitPos, "phosphor_2dipmi_2dkcs_40ipmi_kcs3"},
+    {ipmiKcsBridge4ServiceBitPos, "phosphor_2dipmi_2dkcs_40ipmi_kcs4"},
+    {rmcpBond0ServiceBitPos, "phosphor_2dipmi_2dnet_40bond0"},
+    {rmcpEth0ServiceBitPos, "phosphor_2dipmi_2dnet_40eth0"},
+    {rmcpEth1ServiceBitPos, "phosphor_2dipmi_2dnet_40eth1"},
+    {rmcpUsb0ServiceBitPos, "phosphor_2dipmi_2dnet_40usb0"},
+    {kvmServiceBitPos, "start_2dipkvm"},
+    {virtualMediaServiceBitPos, "xyz_2eopenbmc_project_2eVirtualMedia"},
+}};
+
+static constexpr const char* objectManagerIntf =
+    "org.freedesktop.DBus.ObjectManager";
+static constexpr const char* dBusPropIntf = "org.freedesktop.DBus.Properties";
+static constexpr const char* serviceConfigBasePath =
+    "/xyz/openbmc_project/control/service";
+static constexpr const char* serviceConfigAttrIntf =
+    "xyz.openbmc_project.Control.Service.Attributes";
+static constexpr const char* socketConfigAttrIntf =
+    "xyz.openbmc_project.Control.Service.SocketAttributes";
+static constexpr const char* getMgdObjMethod = "GetManagedObjects";
+static constexpr const char* propMasked = "Masked";
+static constexpr const char* propPort = "Port";
 
 /* Session Management D-bus details*/
 static constexpr const char* sessionManagerService =

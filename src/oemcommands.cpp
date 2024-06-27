@@ -6757,6 +6757,235 @@ ipmi::RspType<uint32_t> ipmiOEMGetSessionTimeout()
     return ipmi::responseSuccess(static_cast<uint32_t>(sessionTimeOut));
 }
 
+// control BMC services
+std::string getBmcServiceConfigMgrName()
+{
+    static std::string serviceCfgMgr{};
+    if (serviceCfgMgr.empty())
+    {
+        try
+        {
+            auto sdbusp = getSdBus();
+            serviceCfgMgr = ipmi::getService(*sdbusp, objectManagerIntf,
+                                             serviceConfigBasePath);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            serviceCfgMgr.clear();
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error: In fetching disabling service manager name");
+            return serviceCfgMgr;
+        }
+    }
+    return serviceCfgMgr;
+}
+
+static inline void checkAndThrowError(boost::system::error_code& ec,
+                                      const std::string& msg)
+{
+    if (ec)
+    {
+        std::string msgToLog = ec.message() + (msg.empty() ? "" : " - " + msg);
+        phosphor::logging::log<phosphor::logging::level::ERR>(msgToLog.c_str());
+        throw sdbusplus::exception::SdBusError(-EIO, msgToLog.c_str());
+    }
+    return;
+}
+
+// General function to get a property value
+template <typename T>
+static inline T getPropertyValue(const DbusInterfaceMap& intfMap,
+                                 const std::string& intfName,
+                                 const std::string& propName)
+{
+    for (const auto& intf : intfMap)
+    {
+        if (intf.first == intfName)
+        {
+            auto it = intf.second.find(propName);
+            if (it == intf.second.end())
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Error: in getting property value");
+                throw sdbusplus::exception::SdBusError(
+                    -EIO, "ERROR in reading property value");
+            }
+            T value = std::get<T>(it->second);
+            return value;
+        }
+    }
+    return T{};
+}
+
+// Function to get the value of the Masked property
+static inline bool getEnabledValue(const DbusInterfaceMap& intfMap)
+{
+    bool maskedValue = getPropertyValue<bool>(intfMap, serviceConfigAttrIntf,
+                                              propMasked);
+    bool result = !maskedValue;
+    return result;
+}
+
+// Function to get the value of the Port property
+static inline uint16_t getPortValue(const DbusInterfaceMap& intfMap)
+{
+    return getPropertyValue<uint16_t>(intfMap, socketConfigAttrIntf, propPort);
+}
+
+// Helper function to get the object map
+ObjectValueTree getObjectMap(boost::asio::yield_context& yield)
+{
+    auto sdbusp = getSdBus();
+    boost::system::error_code ec;
+    auto objectMap = sdbusp->yield_method_call<ObjectValueTree>(
+        yield, ec, getBmcServiceConfigMgrName().c_str(), serviceConfigBasePath,
+        objectManagerIntf, getMgdObjMethod);
+    checkAndThrowError(ec, "GetMangagedObjects for service cfg failed");
+    return objectMap;
+}
+
+// Function to get BMC control services
+ipmi::RspType<uint16_t>
+    ipmiOEMGetBmcControlServices(boost::asio::yield_context yield,
+                                 uint16_t serviceValue = 0)
+{
+    uint16_t resultValue = 0;
+
+    if (serviceValue > maxServiceBit)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    try
+    {
+        auto objectMap = getObjectMap(yield);
+
+        for (const auto& services : bmcService)
+        {
+            if (serviceValue != 0)
+            {
+                const uint16_t serviceMask = 1 << services.first;
+                if (!(serviceValue & serviceMask))
+                {
+                    continue;
+                }
+            }
+
+            for (const auto& obj : objectMap)
+            {
+                if (boost::algorithm::starts_with(obj.first.filename(),
+                                                  services.second))
+                {
+                    resultValue |= getEnabledValue(obj.second)
+                                   << services.first;
+                    break;
+                }
+            }
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess(resultValue);
+}
+
+// Function to get specified BMC service port number
+ipmi::RspType<uint16_t>
+    ipmiOEMGetBmcServicePortValue(boost::asio::yield_context yield,
+                                  uint16_t serviceValue)
+{
+    uint16_t portValue = 0;
+
+    if ((serviceValue > maxServiceBit) ||
+        (serviceValue & (serviceValue - 1)) != 0)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    try
+    {
+        auto objectMap = getObjectMap(yield);
+        for (const auto& services : bmcService)
+        {
+            const uint16_t serviceMask = 1 << services.first;
+
+            if (!(serviceValue & serviceMask))
+            {
+                continue;
+            }
+
+            for (const auto& obj : objectMap)
+            {
+                if (boost::algorithm::starts_with(obj.first.filename(),
+                                                  services.second))
+                {
+                    portValue = getPortValue(obj.second);
+                    break;
+                }
+            }
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    return ipmi::responseSuccess(portValue);
+}
+
+ipmi::RspType<uint8_t>
+    ipmiOEMSetBmcControlServices(boost::asio::yield_context yield,
+                                 uint8_t state, uint16_t serviceValue)
+{
+    constexpr uint16_t servicesRsvdMask = 0x8000;
+    constexpr uint8_t enableService = 0x1;
+
+    if ((state > enableService) || (serviceValue & servicesRsvdMask) ||
+        !serviceValue || (serviceValue > maxServiceBit))
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    try
+    {
+        auto objectMap = getObjectMap(yield);
+        for (const auto& services : bmcService)
+        {
+            // services.first holds the bit position of the service, check
+            // whether it has to be updated.
+            const uint16_t serviceMask = 1 << services.first;
+
+            if (!(serviceValue & serviceMask))
+            {
+                continue;
+            }
+            for (const auto& obj : objectMap)
+            {
+                if (boost::algorithm::starts_with(obj.first.filename(),
+                                                  services.second))
+                {
+                    if (state != getEnabledValue(obj.second))
+                    {
+                        auto sdbusp = getSdBus();
+                        boost::system::error_code ec;
+                        sdbusp->yield_method_call<>(
+                            yield, ec, getBmcServiceConfigMgrName().c_str(),
+                            obj.first.str, dBusPropIntf, "Set",
+                            serviceConfigAttrIntf, propMasked,
+                            ipmi::DbusVariant(!state));
+                        checkAndThrowError(ec, "Set Masked property failed");
+                    }
+                }
+            }
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    return ipmi::responseSuccess();
+}
+
 /** @brief implementes To Clear KVM Session Information
  *  @returns ipmi completion code.
  */
@@ -6785,6 +7014,67 @@ ipmi::RspType<uint8_t> ipmiOEMClearSessionInfo()
                         phosphor::logging::entry("EXCEPTION=%s", e.what()));
         return ipmi::response(ipmi::ccUnspecifiedError);
     }
+    return ipmi::responseSuccess();
+}
+
+ipmi::RspType<uint8_t>
+    ipmiOEMSetBmcServicePortValue(boost::asio::yield_context yield,
+                                  uint16_t serviceValue, uint16_t portValue)
+{
+    if ((portValue > maxPortValue) || (portValue == 0) ||
+        (serviceValue > maxServiceBit) ||
+        ((serviceValue & (serviceValue - 1)) != 0))
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    try
+    {
+        auto objectMap = getObjectMap(yield);
+        for (const auto& services : bmcService)
+        {
+            const uint16_t serviceMask = 1 << services.first;
+            if (!(serviceValue & serviceMask))
+            {
+                continue;
+            }
+
+            bool portPropertyFound = false;
+            for (const auto& obj : objectMap)
+            {
+                if (boost::algorithm::starts_with(obj.first.filename(),
+                                                  services.second))
+                {
+                    auto it = obj.second.find(socketConfigAttrIntf);
+                    if (it != obj.second.end() &&
+                        it->second.find(propPort) != it->second.end())
+                    {
+                        auto sdbusp = getSdBus();
+                        boost::system::error_code ec;
+                        sdbusp->yield_method_call<>(
+                            yield, ec, getBmcServiceConfigMgrName().c_str(),
+                            obj.first.str, dBusPropIntf, "Set",
+                            socketConfigAttrIntf, propPort,
+                            ipmi::DbusVariant(portValue));
+                        checkAndThrowError(ec, "Set Port property failed");
+                        portPropertyFound = true;
+                        break;
+                    }
+                }
+            }
+            if (!portPropertyFound)
+            {
+                std::cout << "Port property not defined for service: "
+                          << services.second << std::endl;
+                return ipmi::responseInvalidFieldRequest();
+            }
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
     return ipmi::responseSuccess();
 }
 
@@ -7125,6 +7415,26 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetSessionTimeout, Privilege::Admin,
                     ipmiOEMGetSessionTimeout);
+    // control BMC services
+    //  <Set Bmc Service Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetBmcServiceStatus, Privilege::Admin,
+                    ipmiOEMSetBmcControlServices);
+
+    // <Get Bmc Service Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetBmcServiceStatus, Privilege::User,
+                    ipmiOEMGetBmcControlServices);
+
+    // <Set Bmc Service Port Value>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetBmcServicePortValue, Privilege::Admin,
+                    ipmiOEMSetBmcServicePortValue);
+
+    // <Get Bmc Service Port Value>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetBmcServicePortValue, Privilege::User,
+                    ipmiOEMGetBmcServicePortValue);
 
     // <Clear Session Information>
     registerHandler(prioOemBase, ami::netFnGeneral,
