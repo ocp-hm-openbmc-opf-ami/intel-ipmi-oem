@@ -1623,6 +1623,18 @@ ipmi::RspType<uint16_t,             // Next Record ID
                                  response);
 }
 
+std::string getSelPolicy()
+{
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    auto service = ipmi::getService(*busp, loggingSettingIntf,
+                                    loggingSettingObjPath);
+    Value property = ipmi::getDbusProperty(*busp, service,
+                                          loggingSettingObjPath,
+                                          loggingSettingIntf, "SelPolicy");
+
+    return std::get<std::string>(property);
+}
+
 ipmi::RspType<uint16_t>
     ipmiStorageAddSELEntry(uint16_t recordID, uint8_t recordType,
                            [[maybe_unused]] uint32_t timeStamp, uint16_t generatorID,
@@ -1634,6 +1646,23 @@ ipmi::RspType<uint16_t>
     static constexpr auto systemRecordType = 0x02;
     cancelSELReservation();
     auto selDataStr = ipmi::sel::toHexStr(eventData);
+
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    auto service = ipmi::getService(*busp, loggingSettingIntf,
+                                    loggingSettingObjPath);
+    Value infoProperty = ipmi::getDbusProperty(
+        *busp, service, loggingSettingObjPath, loggingSettingIntf, "InfoCount");
+
+    Value errorProperty =
+        ipmi::getDbusProperty(*busp, service, loggingSettingObjPath,
+                              loggingSettingIntf, "ErrorCount");
+
+    if (getSelPolicy() == "xyz.openbmc_project.Logging.Settings.Policy.Linear")
+    {
+        if ((std::get<uint32_t>(infoProperty) >= InfoEventEntries))
+            return ipmi::responseParmOutOfRange();
+    }
+
     if (recordType == systemRecordType)
     {
         std::string objpath("");

@@ -22,6 +22,11 @@
 static constexpr uint8_t ipmiSdrVersion = 0x51;
 static constexpr uint8_t eventDataSize = 3;
 
+static constexpr const char* loggingSettingIntf =
+    "xyz.openbmc_project.Logging.Settings";
+static constexpr const char* loggingSettingObjPath =
+    "/xyz/openbmc_project/logging/settings";
+
 namespace intel_oem::ipmi::sel
 {
 static constexpr uint8_t selOperationSupport = 0x02;
