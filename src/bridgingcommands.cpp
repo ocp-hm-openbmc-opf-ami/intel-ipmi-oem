@@ -27,6 +27,8 @@
 
 #include <bitset>
 #include <cstring>
+#include <map>
+#include <variant>
 #include <vector>
 
 static constexpr const char* wdtService = "xyz.openbmc_project.Watchdog";
@@ -39,6 +41,21 @@ static constexpr const char* wdtInterruptFlagProp =
 static constexpr const char* ipmbBus = "xyz.openbmc_project.Ipmi.Channel.Ipmb";
 static constexpr const char* ipmbObj = "/xyz/openbmc_project/Ipmi/Channel/Ipmb";
 static constexpr const char* ipmbIntf = "org.openbmc.Ipmb";
+
+static constexpr const char* loggingService = "xyz.openbmc_project.Logging";
+
+/*D-bus details for BMC Global enable */
+static constexpr const char* settingService = "xyz.openbmc_project.Settings";
+static constexpr const char* globalEnblObjpath =
+    "/xyz/openbmc_project/control/globalenables";
+static constexpr const char* globalEnblInterface =
+    "xyz.openbmc_project.Control.BMC.Globalenables";
+
+constexpr std::string eventDirstr = "EVENT_DIR";
+constexpr std::string generateIdstr = "GENERATOR_ID";
+constexpr std::string sensorEventData = "SENSOR_DATA";
+constexpr std::string sensorTypestr = "SENSOR_TYPE";
+std::string recordTypestr = "RECORD_TYPE";
 
 static Bridging bridging;
 static bool eventMessageBufferFlag = false;
@@ -694,6 +711,38 @@ using oemTsEventType = std::tuple<
 using oemEventType =
     std::array<uint8_t, intel_oem::ipmi::sel::oemEventSize>;     // Event Data
 
+std::pair<std::string, std::string> parseEntries(const std::string& entry)
+{
+    constexpr auto equalSign = "=";
+    auto pos = entry.find(equalSign);
+    assert(pos != std::string::npos);
+    auto key = entry.substr(0, pos);
+    auto val = entry.substr(pos + 1);
+    return {key, val};
+}
+
+uint8_t convertData(const std::string_view& str, int base = 10)
+{
+    int ret;
+    std::from_chars(str.data(), str.data() + str.size(), ret, base);
+    return static_cast<uint8_t>(ret);
+}
+
+// Converts a hex string to a vector of uint8_t values.
+std::vector<uint8_t> convertVector(const std::string_view& str)
+{
+    std::vector<uint8_t> ret;
+    auto len = str.size() / 2;
+    ret.reserve(len);
+    for (size_t i = 0; i < len; ++i)
+    {
+        // Convert the next two-character hex substring to a uint8_t value and
+        // append it to the vector.
+        ret.emplace_back(convertData(str.substr(i * 2, 2), 16));
+    }
+    return ret;
+}
+
 /** @brief implements of Read event message buffer command
  *
  *  @returns IPMI completion code plus response data
@@ -708,14 +757,19 @@ using oemEventType =
  *   - eventDir - Event Direction
  *   - eventData - Event Data field
  */
-ipmi::RspType<uint16_t,                   // Record ID
-              uint8_t,                    // Record Type
-              std::variant<systemEventType, oemTsEventType,
-                           oemEventType>> // Record Content
+ipmi::RspType<uint16_t,             // Record ID
+              uint8_t,              // Record Type
+              uint64_t,             // Timestamp
+              uint16_t,             // Generator ID
+              uint8_t,              // EVM Rev
+              uint8_t,              // Sensor Type
+              uint8_t,              // Sensor Number
+              uint8_t,              // Event Dir
+              std::vector<uint8_t>> // EventData
     ipmiAppReadEventMessageBuffer(ipmi::Context::ptr& ctx)
 {
+    std::string lastEntryPath;
     ipmi::ChannelInfo chInfo;
-
     try
     {
         getChannelInfo(ctx->channel, chInfo);
@@ -735,27 +789,116 @@ ipmi::RspType<uint16_t,                   // Record ID
             "System(SMS) interface");
         return ipmi::responseCommandNotAvailable();
     }
+    auto bus = sdbusplus::bus::new_default();
+    bool eventMsgBuf;
+    auto method = bus.new_method_call(settingService, globalEnblObjpath,
+                                      "org.freedesktop.DBus.Properties", "Get");
+    // Append the interface and property name to the method call
+    method.append(globalEnblInterface, "EventmsgBuf");
+    try
+    {
+        auto reply = bus.call(method);
+        // Extract the value from the response
+        std::variant<bool> value;
+        reply.read(value);
+        eventMsgBuf = std::get<bool>(value);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get EventMsgBuffer Property",
+            phosphor::logging::entry("ERROR=%s", e.what()));
+        eventMsgBuf = false;
+    }
+    if (eventMsgBuf != false)
+    {
+        auto mapperCall = bus.new_method_call(
+            "xyz.openbmc_project.ObjectMapper",
+            "/xyz/openbmc_project/object_mapper",
+            "xyz.openbmc_project.ObjectMapper", "GetSubTree");
+        constexpr const auto depth = 2;
+        constexpr std::array<const char*, 1> interface = {
+            "xyz.openbmc_project.Logging.Entry"};
+        mapperCall.append("/xyz/openbmc_project/logging", depth, interface);
+        try
+        {
+            auto mapperReply = bus.call(mapperCall);
+            std::map<std::string,
+                     std::map<std::string, std::vector<std::string>>>
+                subtree;
+            mapperReply.read(subtree);
+            std::vector<std::string> entryPaths;
 
-    uint16_t recordId =
-        static_cast<uint16_t>(0x5555); // recordId: 0x55 << 8 | 0x55
-    uint16_t generatorId =
-        static_cast<uint16_t>(0xA741); // generatorId: 0xA7 << 8 | 0x41
-    constexpr uint8_t recordType = 0xC0;
-    constexpr uint8_t eventMsgFormatRev = 0x3A;
-    constexpr uint8_t sensorNumber = 0xFF;
+            for (const auto& [path, object] : subtree)
+            {
+                entryPaths.push_back(path);
+            }
+            if (entryPaths.empty())
+            {
+                return ipmi::responseNodataAvailablequeuebufferEmpty();
+            }
+            // Sorting the entries to get the last entry
+            std::sort(entryPaths.begin(), entryPaths.end());
 
-    // TODO need to be implemented.
-    std::array<uint8_t, intel_oem::ipmi::sel::systemEventSize> eventData{};
-    // All '0xFF' since unused.
-    eventData.fill(0xFF);
+            lastEntryPath = entryPaths.back();
+        }
+        catch (const std::exception& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to call SEL Entries method",
+                phosphor::logging::entry("ERROR=%s", e.what()));
+            return ipmi::responseUnspecifiedError();
+        }
+        std::variant<std::vector<std::string>> entryData;
+        //  Read all the log entry properties.
+        auto methodCall =
+            bus.new_method_call(loggingService, lastEntryPath.c_str(),
+                                "org.freedesktop.DBus.Properties", "Get");
+        methodCall.append("xyz.openbmc_project.Logging.Entry",
+                          "AdditionalData");
+        auto reply = bus.call(methodCall);
+        reply.read(entryData);
+        if (reply.is_method_error())
+        {
+            return ipmi::responseUnspecifiedError();
+        }
+        std::vector<std::string> Data =
+            std::get<std::vector<std::string>>(entryData);
+        std::map<std::string, std::string> ret;
+        for (const auto& d : Data)
+        {
+            ret.insert(parseEntries(d));
+        }
+        std::map<std::string, std::variant<uint16_t, uint64_t>> SelIdtimestamp;
+        auto method = bus.new_method_call(loggingService, lastEntryPath.c_str(),
+                                          "org.freedesktop.DBus.Properties",
+                                          "GetAll");
+        method.append("xyz.openbmc_project.Logging.Entry");
+        auto resp = bus.call(method);
+        resp.read(SelIdtimestamp);
+        if (resp.is_method_error())
+        {
+            return ipmi::responseUnspecifiedError();
+        }
+        auto recordId = std::get<uint16_t>(SelIdtimestamp["Id"]);
+        auto timestamp = std::get<uint64_t>(SelIdtimestamp["Timestamp"]);
+        auto recordType = static_cast<uint8_t>(convertData(ret[recordTypestr]));
+        auto eventDir = static_cast<uint8_t>(convertData(ret[eventDirstr]));
+        auto generatorId =
+            static_cast<uint16_t>(convertData(ret[generateIdstr]));
+        std::vector<uint8_t> sensorData = (convertVector(ret[sensorEventData]));
+        auto sensorType = static_cast<uint8_t>(convertData(ret[sensorTypestr]));
+        constexpr uint8_t eventMsgFormatRev = 0x3A;
+        constexpr uint8_t sensorNumber = 0xFF;
 
-    // Set the event message buffer flag
-    eventMessageBufferFlag = true;
-
-    return ipmi::responseSuccess(
-        recordId, recordType,
-        systemEventType{generatorId, 0, 0, eventMsgFormatRev, sensorNumber,
-                        static_cast<uint7_t>(0), false, eventData});
+        return ipmi::responseSuccess(recordId, recordType, timestamp,
+                                     generatorId, eventMsgFormatRev, sensorType,
+                                     sensorNumber, eventDir, sensorData);
+    }
+    else
+    {
+        return ipmi::responseCommandDisabled();
+    }
 }
 
 static void register_bridging_functions() __attribute__((constructor));

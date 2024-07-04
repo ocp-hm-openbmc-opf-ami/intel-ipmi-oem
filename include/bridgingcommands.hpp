@@ -22,6 +22,14 @@
  * @brief Response queue defines
  */
 constexpr int responseQueueMaxSize = 20;
+namespace ipmi
+{
+constexpr Cc ccNodataAvailablequeuebufferEmpty = 0x80;
+static inline auto responseNodataAvailablequeuebufferEmpty()
+{
+    return response(ccNodataAvailablequeuebufferEmpty);
+}
+} // namespace ipmi
 
 /**
  * @brief Ipmb misc
