@@ -677,7 +677,7 @@ static void registerChassisFunctions(void)
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnChassis,
                           ipmi::chassis::cmdChassisIdentify,
                           ipmi::Privilege::Operator, ipmiChassisIdentify);
-#ifdef IF_NON_INTEL_PLATFORMS
+#ifdef IF_INTEL_PLATFORMS
     // <Get Chassis Status>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnChassis,
                           ipmi::chassis::cmdGetChassisStatus,

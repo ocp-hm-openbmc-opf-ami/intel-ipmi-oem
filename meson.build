@@ -20,7 +20,6 @@ all_args = [
     '-DBOOST_COROUTINES_NO_DEPRECATION_WARNING',
     '-DBMC_VALIDATION_UNSECURE_FEATURE',
     '-DUSING_ENTITY_MANAGER_DECORATORS',
-    '-DIF_NON_INTEL_PLATFORMS',
     '-Wno-psabi',
     '-Wno-pedantic',
   ]
@@ -29,8 +28,11 @@ feature_map = {
   'intel-pfr': '-DINTEL_PFR_ENABLED',
   'bmc-validation-unsecure-feature': '-DBMC_VALIDATION_UNSECURE_FEATURE',
   'using-entity-manager-decorators': '-DUSING_ENTITY_MANAGER_DECORATORS',
-  'non-intel-platforms' : '-DIF_NON_INTEL_PLATFORMS',
 }
+
+if get_option('non-intel-platforms').disabled()
+  add_project_arguments('-DIF_INTEL_PLATFORMS', language: 'cpp')
+endif
 
 foreach option_key, option_value : feature_map
   if(get_option(option_key).allowed())
