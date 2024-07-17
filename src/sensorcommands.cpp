@@ -558,7 +558,7 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
 
 ipmi::RspType< uint8_t,     //sensor type
               uint8_t >    //event/reading type code
-              ipmiGetSensorTypeCmd(int8_t SensorNum)
+              ipmiGetSensorTypeCmd(uint8_t SensorNum)
 {
      std::string sensorPath;
      uint8_t sensorType;
