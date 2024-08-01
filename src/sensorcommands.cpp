@@ -836,21 +836,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     double min = 0;
     getSensorMaxMin(sensorMap, max, min);
 
-    if (lowerNonCriticalThreshMask || lowerCriticalThreshMask)
-    {
-      if(lowerNonCritical < min || lowerCritical < min)
-       {
-          return ipmi::responseInvalidFieldRequest();
-       }
-    }
-    if (upperNonCriticalThreshMask || upperCriticalThreshMask )
-    {
-      if(upperNonCritical > max || upperCritical > max )
-       {
-          return ipmi::responseInvalidFieldRequest();
-       }
-    }
-
     int16_t mValue = 0;
     int16_t bValue = 0;
     int8_t rExp = 0;
@@ -971,6 +956,12 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         double valueToSet = ((mValue * std::get<thresholdValue>(property)) +
                              (bValue * std::pow(10.0, bExp))) *
                             std::pow(10.0, rExp);
+
+        if (valueToSet < min || valueToSet > max)
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
+
         setDbusProperty(
             *getSdBus(), connection, path, std::get<interface>(property),
             std::get<propertyName>(property), ipmi::Value(valueToSet));
