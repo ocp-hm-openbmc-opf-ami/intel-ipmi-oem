@@ -1101,7 +1101,6 @@ ipmi::RspType<uint8_t>
         writeTimer->stop();
         if (!writeFru())
         {
-            lastDevId = 0xFF;
             return ipmi::responseInvalidFieldRequest();
         }
         countWritten = std::min(dataToWrite.size(), static_cast<size_t>(0xFF));
@@ -1113,7 +1112,6 @@ ipmi::RspType<uint8_t>
         writeTimer->start(std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::seconds(writeTimeoutSeconds)));
         countWritten = 0;
-        lastDevId = 0xFF;
     }
 
     return ipmi::responseSuccess(countWritten);
