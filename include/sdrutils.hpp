@@ -405,7 +405,8 @@ enum class SensorEventTypeCodes : uint8_t
     acpiDevice = 0x0c,
     sensorSpecified = 0x6f
 };
-
+// Adding FRU Map
+static ipmi::FruMap fruMap;
 const static boost::container::flat_map<
     const char*, std::pair<SensorTypeCodes, SensorEventTypeCodes>, CmpStr>
     sensorTypes{

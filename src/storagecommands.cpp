@@ -35,7 +35,7 @@
 #include <sdbusplus/timer.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Logging/SEL/error.hpp>
-
+#include <config.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -629,7 +629,7 @@ void recalculateHashes()
     devicePath.clear();
     // hash the object paths to create unique device id's. increment on
     // collision
-
+#if CONFIGURABLE_FRU == 1
     using GetSubTreePathsType = std::vector<std::string>;
     auto bus = getSdBus();
     auto message = bus->new_method_call("xyz.openbmc_project.ObjectMapper",
@@ -642,6 +642,7 @@ void recalculateHashes()
     GetSubTreePathsType idPaths;
     auto reply = bus->call(message);
     reply.read(idPaths);
+#endif
 
     for (const auto& fru : frus)
     {
@@ -672,7 +673,7 @@ void recalculateHashes()
         }
 
         uint8_t fruHash = 0;
-
+#if CONFIGURABLE_FRU == 0
         std::hash<std::string> hasher;
         if (chassisType.compare(chassisTypeRackMount) != 0)
         {
@@ -683,6 +684,8 @@ void recalculateHashes()
                 fruHash = 1;
             }
         }
+#else
+
         for (const auto& path : idPaths)
         {
             std::map<std::string, DbusVariant> properties;
@@ -739,7 +742,7 @@ void recalculateHashes()
                 }
             }
         }
-
+#endif
         std::pair<uint16_t, uint8_t> newDev(fruBus, fruAddr);
 
         bool emplacePassed = false;
@@ -883,14 +886,28 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
             break;
         }
     }
-    if (fruCache.empty())
+
+#if CONFIGURABLE_FRU == 1
+
+    if (fruCache.empty() || (fruCache.size() <= 8))
     {
         // when fruCache is empty assume eemprom is empty and append with max
         // fru file size 256
-        std::vector<uint8_t> emptyFru(0xff, 0xff);
-        std::copy(emptyFru.begin(), emptyFru.end(),
-                  std::back_inserter(fruCache));
+
+        uint8_t configSize = 0xff;
+        for (auto& i : fruMap)
+        {
+            if (i.first == devId)
+            {
+                configSize = i.second;
+            }
+            fruCache.clear();
+            std::vector<uint8_t> emptyFru(configSize, 0xff);
+            std::copy(emptyFru.begin(), emptyFru.end(),
+                      std::back_inserter(fruCache));
+        }
     }
+#endif
 
     if (!foundFru)
     {
@@ -975,6 +992,8 @@ void startMatch(void)
         recalculateHashes();
         lastDevId = 0xFF;
     });
+#if CONFIGURABLE_FRU == 1
+
     fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
                             [](sdbusplus::message::message& message) {
                                 sdbusplus::message::object_path path;
@@ -989,7 +1008,11 @@ void startMatch(void)
                                 }
 
                                 recalculateHashes();
+                                initFruConfig();
+
                             });
+#endif
+
     // call once to populate
     boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
         replaceCacheFru(getSdBus(), yield);
@@ -1901,11 +1924,61 @@ std::vector<uint8_t> getNMDiscoverySDR(uint16_t index, uint16_t recordId)
 
     return resp;
 }
+void initFruConfig()
+{
+    fruMap.clear();
+
+    auto dbus = getSdBus();
+    using GetSubTreePathsType = std::vector<std::string>;
+    auto method = dbus->new_method_call(
+        ipmi::sel::mapperBusName, ipmi::sel::mapperObjPath,
+        ipmi::sel::mapperIntf, "GetSubTreePaths");
+    method.append("/", 0,
+                  std::array<const char*, 1>{
+                      "xyz.openbmc_project.Inventory.Item.FruConfig"});
+
+    auto reply = dbus->call(method);
+    GetSubTreePathsType idPaths;
+    reply.read(idPaths);
+    for (const auto& path : idPaths)
+    {
+        std::map<std::string, DbusVariant> properties;
+        sdbusplus::message_t getProperties =
+            dbus->new_method_call("xyz.openbmc_project.FruDevice", path.c_str(),
+                                  "org.freedesktop.DBus.Properties", "GetAll");
+        getProperties.append("xyz.openbmc_project.Inventory.Item.FruConfig");
+        try
+        {
+            sdbusplus::message_t response = dbus->call(getProperties);
+            response.read(properties);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "GetAll Failed";
+            continue;
+        }
+
+        uint8_t fruId;
+        auto fruIdIter = properties.find("FruId");
+        auto fruSizeIter = properties.find("FruSize");
+        if (fruIdIter != properties.end())
+        {
+            auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
+            fruId = static_cast<uint8_t>(*fruIdValue);
+
+            auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
+            uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+
+            fruMap.push_back(std::make_pair(fruId, fruSize));
+        }
+    }
+}
 
 void registerStorageFunctions()
 {
     createTimers();
     startMatch();
+    initFruConfig();
 
     // <Get FRU Inventory Area Info>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
