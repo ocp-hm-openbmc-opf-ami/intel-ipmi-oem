@@ -62,6 +62,7 @@ enum class ChassisIDState
 };
 static ChassisIDState chassisIDState = ChassisIDState::off;
 
+constexpr ipmi::Cc ccParameterNotSupported = 0x80;
 constexpr size_t defaultIdentifyTimeOut = 15;
 
 std::unique_ptr<sdbusplus::Timer> identifyTimer
@@ -641,6 +642,12 @@ ipmi::RspType<> ipmiSetFrontPanelButtonEnables(
     {
         return ipmi::responseInvalidFieldRequest();
     }
+
+    if (disableSleepButton)
+    {
+        return ipmi::response(ccParameterNotSupported);
+    }
+
     bool error = false;
 
     error |= setButtonEnabled(powerButtonPath, disablePowerButton);
