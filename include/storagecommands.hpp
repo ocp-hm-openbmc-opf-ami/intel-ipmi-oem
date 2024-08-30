@@ -49,6 +49,7 @@ constexpr auto oemEFDataSize = 13;
 
 constexpr auto propAdditionalData = "AdditionalData";
 constexpr auto propResolved = "Resolved";
+constexpr auto propSeverity = "Severity";
 
 constexpr auto strEventType = "EVENT_TYPE";
 constexpr auto strEventDir = "EVENT_DIR";
@@ -60,6 +61,14 @@ constexpr auto strSensorType = "SENSOR_TYPE";
 
 constexpr auto selEraseTimestamp = "/var/lib/ipmi/sel_erase_time";
 constexpr uint8_t firstEntryId = 1;
+
+struct SELPolicyinfo
+{
+    bool infoFlag;
+    bool errorFlag;
+    std::string policy;
+};
+
 } // namespace ami::ipmi::sel
 
 static constexpr auto logObjPath = "/xyz/openbmc_project/logging";
@@ -68,6 +77,23 @@ constexpr auto logWatchPath = "/xyz/openbmc_project/logging";
 constexpr auto logBasePath = "/xyz/openbmc_project/logging/entry";
 constexpr auto logEntryIntf = "xyz.openbmc_project.Logging.Entry";
 constexpr auto logDeleteIntf = "xyz.openbmc_project.Object.Delete";
+constexpr const char* informationalLevel =
+    "xyz.openbmc_project.Logging.Entry.Level.Informational";
+constexpr const char* warningLevel =
+    "xyz.openbmc_project.Logging.Entry.Level.Warning";
+constexpr const char* errorLevel =
+    "xyz.openbmc_project.Logging.Entry.Level.Error";
+constexpr auto policyLinear =
+    "xyz.openbmc_project.Logging.Settings.Policy.Linear";
+constexpr auto policyCircular =
+    "xyz.openbmc_project.Logging.Settings.Policy.Circular";
+enum class eventReading : uint8_t
+{
+    lowerNonCritGoingLow = 0x00,
+    lowerCritGoingLow = 0x02,
+    upperNonCritGoingHigh = 0x07,
+    upperCritGoingHigh = 0x09
+};
 
 #pragma pack(push, 1)
 struct GetSDRReq

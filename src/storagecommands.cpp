@@ -65,6 +65,8 @@ using SELEntry = ipmi::sel::SELEventRecordFormat;
 using SELCacheMap = std::map<SELRecordID, SELEntry>;
 using additionalDataMap = std::map<std::string, std::string>;
 using entryDataMap = std::map<ipmi::sel::PropertyName, ipmi::sel::PropertyType>;
+using SELPolicyData = ami::ipmi::sel::SELPolicyinfo;
+SELPolicyData selPolicyInfo;
 
 SELCacheMap selCacheMap __attribute__((init_priority(101)));
 bool selCacheMapInitialized;
@@ -74,7 +76,7 @@ std::unique_ptr<sdbusplus::bus::match_t> selRemovedMatch
     __attribute__((init_priority(101)));
 std::unique_ptr<sdbusplus::bus::match_t> selUpdatedMatch
     __attribute__((init_priority(101)));
-
+std::unique_ptr<sdbusplus::bus::match::match> selPolicyMatch;
 template <typename TP>
 std::time_t to_time_t(TP tp)
 {
@@ -456,6 +458,42 @@ void selUpdatedCallback(sdbusplus::message::message& m)
     }
 }
 
+void selPolicyCallback(sdbusplus::message::message& msg)
+{
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    std::string path = msg.get_path();
+    auto methodCall = bus.new_method_call(msg.get_sender(), msg.get_path(),
+                                          "org.freedesktop.DBus.Properties",
+                                          "GetAll");
+    methodCall.append("xyz.openbmc_project.Logging.Settings");
+    boost::container::flat_map<std::string, std::variant<std::string, bool>>
+        selStatus;
+
+    try
+    {
+        sdbusplus::message::message getSelStatus = bus.call(methodCall);
+        getSelStatus.read(selStatus);
+    }
+    catch (const sdbusplus::exception_t&)
+    {
+        std::cerr << "error getging SEL data from setting \n";
+    }
+
+    auto getPolicy = selStatus.find("SelPolicy");
+    if (getPolicy != selStatus.end())
+    {
+        std::string policy = std::get<std::string>(getPolicy->second);
+        selPolicyInfo.policy = policy;
+    }
+    auto getErrorFlag = selStatus.find("ErrorFlag");
+    auto getInfoFlag = selStatus.find("InfoFlag");
+    if (getErrorFlag != selStatus.end() && getInfoFlag != selStatus.end())
+    {
+        selPolicyInfo.infoFlag = std::get<bool>(getInfoFlag->second);
+        selPolicyInfo.errorFlag = std::get<bool>(getErrorFlag->second);
+    }
+}
+
 void registerSelCallbackHandler()
 {
     using namespace sdbusplus::bus::match::rules;
@@ -480,6 +518,15 @@ void registerSelCallbackHandler()
                 interface("org.freedesktop.DBus.Properties"s) +
                 argN(0, "xyz.openbmc_project.Logging.Entry"),
             std::bind(selUpdatedCallback, std::placeholders::_1));
+    }
+    if (!selPolicyMatch)
+    {
+        selPolicyMatch = std::make_unique<sdbusplus::bus::match::match>(
+            bus,
+            type::signal() + member("PropertiesChanged") +
+                interface("org.freedesktop.DBus.Properties") +
+                argN(0, "xyz.openbmc_project.Logging.Settings"),
+            std::move(selPolicyCallback));
     }
 }
 
@@ -1586,8 +1633,43 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         {
             log<level::ERR>("Failed to get sensor object path");
         }
-        bool assert = (eventDir & 0x80) ? false : true;  // assert reprensenting eventDirection.
-        uint8_t eventType = (eventDir & 0x7F); // 7F representing EventType.
+        bool assert = (eventDir & 0x80) ? false : true;
+        std::string severity;
+        if (!assert)
+        {
+            severity = informationalLevel;
+        }
+        else
+        {
+            switch (static_cast<eventReading>(eventData[0]))
+            {
+                case eventReading::lowerCritGoingLow:
+                case eventReading::upperCritGoingHigh:
+                    severity = errorLevel;
+                    break;
+                case eventReading::lowerNonCritGoingLow:
+                case eventReading::upperNonCritGoingHigh:
+                    severity = warningLevel;
+                    break;
+                default:
+                    severity = informationalLevel;
+            }
+        }
+
+        if (selPolicyInfo.policy == policyLinear)
+        {
+            if (((severity == errorLevel) || (severity == warningLevel)) &&
+                (selPolicyInfo.errorFlag))
+            {
+                return ipmi::responseOutOfSpace();
+            }
+
+            if ((severity == informationalLevel) && selPolicyInfo.infoFlag)
+            {
+                return ipmi::responseOutOfSpace();
+            }
+        }
+
         std::string redfishMessage = intel_oem::ipmi::sel::checkRedfishMessage(
             generatorID, sensorType, sensorNumber, eventDir, eventData[0]);
 
@@ -1599,7 +1681,6 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         addData["GENERATOR_ID"] = std::to_string(generatorID);
         addData["RECORD_TYPE"] = std::to_string(recordType);
         addData["SENSOR_TYPE"] = std::to_string(sensorType);
-        addData["EVENT_TYPE"] = std::to_string(eventType);
         try
         {
             std::string service =
