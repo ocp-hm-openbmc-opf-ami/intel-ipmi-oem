@@ -50,6 +50,7 @@ constexpr auto oemEFDataSize = 13;
 constexpr auto propAdditionalData = "AdditionalData";
 constexpr auto propResolved = "Resolved";
 
+constexpr auto strEventType = "EVENT_TYPE";
 constexpr auto strEventDir = "EVENT_DIR";
 constexpr auto strGenerateId = "GENERATOR_ID";
 constexpr auto strRecordType = "RECORD_TYPE";

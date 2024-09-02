@@ -323,14 +323,15 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     if (iter != m.end())
     {
         record.event.eventRecord.generatorID =
-            static_cast<uint16_t>(convert(iter->second));
+            static_cast<uint16_t>(std::stoi(iter->second));
     }
 
     iter = m.find(ami::ipmi::sel::strEventDir);
+    uint8_t assert;
     if (iter != m.end())
     {
         auto eventDir = static_cast<uint8_t>(convert(iter->second));
-        uint8_t assert = eventDir ? assertEvent : deassertEvent;
+        assert = eventDir ? assertEvent : deassertEvent;
         record.event.eventRecord.eventType |= assert;
     }
 
@@ -349,8 +350,13 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     {
         record.event.eventRecord.sensorType =
             static_cast<uint8_t>(std::stoi(iter->second));
+    }
+    iter = m.find("EVENT_TYPE");
+    if (iter != m.end())
+    {
         record.event.eventRecord.eventType =
-            getEventType(record.event.eventRecord.sensorType);
+            static_cast<uint8_t>(std::stoi(iter->second));
+        record.event.eventRecord.eventType |= assert;
     }
     iter = m.find(strSensorData);
     if (iter != m.end())
@@ -1644,17 +1650,20 @@ ipmi::RspType<uint16_t,             // Next Record ID
                                  response);
 }
 
-ipmi::RspType<uint16_t>
-    ipmiStorageAddSELEntry(uint16_t recordID, uint8_t recordType,
-                           [[maybe_unused]] uint32_t timeStamp, uint16_t generatorID,
-                           [[maybe_unused]] uint8_t evmRev, uint8_t sensorType,
-                           uint8_t sensorNumber, uint8_t eventDir,
-                           std::array<uint8_t, eventDataSize> eventData)
+ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
+    uint16_t recordID, uint8_t recordType, [[maybe_unused]] uint32_t timeStamp,
+    uint16_t generatorID, [[maybe_unused]] uint8_t evmRev, uint8_t sensorType,
+    uint8_t sensorNumber, uint8_t eventDir,
+    std::array<uint8_t, eventDataSize> eventData)
 
 {
     static constexpr auto systemRecordType = 0x02;
     cancelSELReservation();
     auto selDataStr = ipmi::sel::toHexStr(eventData);
+    if (evmRev != intel_oem::ipmi::sel::eventMsgRev)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
     if (recordType == systemRecordType)
     {
         std::string objpath("");
@@ -1674,7 +1683,8 @@ ipmi::RspType<uint16_t>
         {
             log<level::ERR>("Failed to get sensor object path");
         }
-        bool assert = (eventDir & 0x80) ? false : true;
+        bool assert = (eventDir & 0x80) ? false : true;  // assert reprensenting eventDirection.
+        uint8_t eventType = (eventDir & 0x7F); // 7F representing EventType.
         std::string redfishMessage = intel_oem::ipmi::sel::checkRedfishMessage(
             generatorID, sensorType, sensorNumber, eventDir, eventData[0]);
 
@@ -1686,6 +1696,7 @@ ipmi::RspType<uint16_t>
         addData["GENERATOR_ID"] = std::to_string(generatorID);
         addData["RECORD_TYPE"] = std::to_string(recordType);
         addData["SENSOR_TYPE"] = std::to_string(sensorType);
+        addData["EVENT_TYPE"] = std::to_string(eventType);
         try
         {
             std::string service =
