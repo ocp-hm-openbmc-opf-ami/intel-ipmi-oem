@@ -59,7 +59,9 @@
 #include <xyz/openbmc_project/Network/FirewallConfiguration/server.hpp>
 #include <xyz/openbmc_project/Software/Activation/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
+/*TODO: enable once phosphor-dbus-interface patch updated 
 #include <xyz/openbmc_project/USB/status/server.hpp>
+*/
 
 #include <algorithm>
 #include <array>

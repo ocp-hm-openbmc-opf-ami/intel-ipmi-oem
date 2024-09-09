@@ -819,51 +819,6 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
     if (ec)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Couldn't get raw fru because of service",
-            phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
-        return ipmi::ccResponseError;
-    }
-
-    bool foundFru = false;
-    for (auto& service : fruService)
-    {
-        fruCache = ctx->bus->yield_method_call<std::vector<uint8_t>>(
-            ctx->yield, ec, service.first, "/xyz/openbmc_project/FruDevice",
-            "xyz.openbmc_project.FruDeviceManager", "GetRawFru", cacheBus,
-            cacheAddr);
-
-        if (!ec)
-        {
-            foundFru = true;
-            break;
-        }
-    }
-
-#if CONFIGURABLE_FRU == 1
-
-    if (fruCache.empty() || (fruCache.size() <= 8))
-    {
-        // when fruCache is empty assume eemprom is empty and append with max
-        // fru file size 256
-
-        uint8_t configSize = 0xff;
-        for (auto& i : fruMap)
-        {
-            if (i.first == devId)
-            {
-                configSize = i.second;
-            }
-            fruCache.clear();
-            std::vector<uint8_t> emptyFru(configSize, 0xff);
-            std::copy(emptyFru.begin(), emptyFru.end(),
-                      std::back_inserter(fruCache));
-        }
-    }
-#endif
-
-    if (!foundFru)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
             "Couldn't get raw fru",
             phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
         cacheBus = 0xFFFF;
@@ -1681,17 +1636,16 @@ ipmi::RspType<uint8_t> ipmiStorageClearSEL(
     ipmi::Context::ptr&, uint16_t reservationID,
     const std::array<uint8_t, 3>& clr, uint8_t eraseOperation)
 {
-    static constexpr std::array<char, 3> clrOk = {'C', 'L', 'R'};
-    if (clr != clrOk)
-    {
-        return ipmi::responseInvalidFieldRequest();
-    }
-
     if (!checkSELReservation(reservationID))
     {
         return ipmi::responseInvalidReservationId();
     }
 
+    static constexpr std::array<uint8_t, 3> clrExpected = {'C', 'L', 'R'};
+    if (clr != clrExpected)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
     /*
      * Erasure status cannot be fetched from DBUS, so always return erasure
      * status as `erase completed`.

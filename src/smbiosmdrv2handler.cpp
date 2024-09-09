@@ -866,8 +866,8 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
                 "Offset is out of range");
             return ipmi::responseParmOutOfRange();
         }
-        uint8_t* destAddr =
-            mdrv2->smbiosDir.dir[idIndex].dataStorage + xferOffset;
+	uint8_t* destAddr =
+            mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage + xferOffset;
         uint8_t* sourceAddr = reinterpret_cast<uint8_t*>(mdrv2->area->vPtr);
         uint32_t calcChecksum = mdrv2->calcChecksum32(sourceAddr, xferLength);
         if (calcChecksum != checksum)
