@@ -160,7 +160,7 @@ struct Mdr2DirStruct
 // Three members include dataSetSize, dataVersion and timestamp
 static constexpr const size_t syncDirCommonSize = 3;
 
-// ====================== MDR II Pull Command Structures ======================
+// ====================== MDR II Pull Comman======================
 struct MDRiiGetDataInfoRequest
 {
     uint16_t agentId;
@@ -376,6 +376,7 @@ class MDRV2
                                         const_cast<char*>(mdrType2File),
                                         const_cast<char*>(smbiosMdrv2Interface),
                                         const_cast<char*>(smbiosMdrv2Path)}};
+
     std::unique_ptr<SharedMemoryArea> area;
     std::unique_ptr<sdbusplus::Timer> timer;
 

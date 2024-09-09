@@ -115,8 +115,8 @@ static inline bool
                                 ipmbConnectionHeaderLength);
 }
 
-static inline bool ipmbDataChecksumValidate(const ipmbHeader* ipmbHeader,
-                                            size_t length)
+static inline bool
+    ipmbDataChecksumValidate(const ipmbHeader* ipmbHeader, size_t length)
 {
     return ipmbChecksumValidate((reinterpret_cast<const uint8_t*>(ipmbHeader) +
                                  ipmbConnectionHeaderLength),
@@ -153,9 +153,9 @@ IpmbRequest::IpmbRequest(const ipmbHeader* ipmbBuffer, size_t bufferLength)
     rqLun = ipmbLunFromSeqLunGet(ipmbBuffer->Header.Req.rqSeqLUN);
     cmd = ipmbBuffer->Header.Req.cmd;
 
-    size_t dataLength = bufferLength -
-                        (ipmbConnectionHeaderLength +
-                         ipmbRequestDataHeaderLength + ipmbChecksumSize);
+    size_t dataLength =
+        bufferLength - (ipmbConnectionHeaderLength +
+                        ipmbRequestDataHeaderLength + ipmbChecksumSize);
 
     if (dataLength > 0)
     {
@@ -168,9 +168,8 @@ IpmbResponse::IpmbResponse(uint8_t address, uint8_t netFn, uint8_t rqLun,
                            uint8_t rsSA, uint8_t seq, uint8_t rsLun,
                            uint8_t cmd, uint8_t completionCode,
                            std::vector<uint8_t>& inputData) :
-    address(address),
-    netFn(netFn), rqLun(rqLun), rsSA(rsSA), seq(seq), rsLun(rsLun), cmd(cmd),
-    completionCode(completionCode)
+    address(address), netFn(netFn), rqLun(rqLun), rsSA(rsSA), seq(seq),
+    rsLun(rsLun), cmd(cmd), completionCode(completionCode)
 {
     data.reserve(ipmbMaxDataSize);
 
@@ -257,10 +256,9 @@ static constexpr bool isMeCmdAllowed(uint8_t netFn, uint8_t cmd)
     }
 }
 
-ipmi::Cc Bridging::handleIpmbChannel(ipmi::Context::ptr& ctx,
-                                     const uint8_t tracking,
-                                     const std::vector<uint8_t>& msgData,
-                                     std::vector<uint8_t>& rspData)
+ipmi::Cc Bridging::handleIpmbChannel(
+    ipmi::Context::ptr& ctx, const uint8_t tracking,
+    const std::vector<uint8_t>& msgData, std::vector<uint8_t>& rspData)
 {
     ipmi::Manufacturing mtm;
 
@@ -340,9 +338,9 @@ ipmi::Cc Bridging::handleIpmbChannel(ipmi::Context::ptr& ctx,
 
     std::tie(status, netFn, lun, cmd, cc, dataReceived) = ipmbResponse;
 
-    auto respReceived = IpmbResponse(ipmbRequest.rqSA, netFn, lun,
-                                     ipmbRequest.address, ipmbRequest.seq, lun,
-                                     cmd, cc, dataReceived);
+    auto respReceived =
+        IpmbResponse(ipmbRequest.rqSA, netFn, lun, ipmbRequest.address,
+                     ipmbRequest.seq, lun, cmd, cc, dataReceived);
 
     // check IPMB layer status
     if (status)
@@ -632,12 +630,10 @@ ipmi::RspType<std::bitset<8>> ipmiAppGetMessageFlags(ipmi::Context::ptr& ctx)
 
  *  @return IPMI completion code on success
  */
-ipmi::RspType<> ipmiAppClearMessageFlags(ipmi::Context::ptr& ctx,
-                                         bool receiveMessage,
-                                         bool eventMsgBufFull, bool reserved2,
-                                         bool watchdogTimeout, bool reserved1,
-                                         bool /* oem0 */, bool /* oem1 */,
-                                         bool /* oem2 */)
+ipmi::RspType<> ipmiAppClearMessageFlags(
+    ipmi::Context::ptr& ctx, bool receiveMessage, bool eventMsgBufFull,
+    bool reserved2, bool watchdogTimeout, bool reserved1, bool /* oem0 */,
+    bool /* oem1 */, bool /* oem2 */)
 {
     ipmi::ChannelInfo chInfo;
 
