@@ -6330,7 +6330,7 @@ ipmiGetBootStrapAccount(ipmi::Context::ptr ctx,
             phosphor::logging::log<level::ERR>(
                 "ipmiGetBootStrapAccount: Credential BootStrapping Disabled "
                 "Get BootStrap Account command rejected.");
-            return ipmi::responseSuccess();
+            return ipmi::response(ipmi::ipmiCCBootStrappingDisabled);
         }
 
         struct group* gr = getgrent();
