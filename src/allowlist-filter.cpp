@@ -83,7 +83,7 @@ class AllowlistFilter
     static constexpr const char* restrictionModePath =
         "/xyz/openbmc_project/control/security/restriction_mode";
     static constexpr const char* systemOsStatusPath =
-        "/xyz/openbmc_project/state/os";
+        "/xyz/openbmc_project/state/host0";
 };
 
 static inline uint8_t getSMMChannel()
@@ -118,8 +118,8 @@ AllowlistFilter::AllowlistFilter()
 
     ipmi::registerFilter(ipmi::prioOpenBmcBase,
                          [this](ipmi::message::Request::ptr request) {
-        return filterMessage(request);
-    });
+                             return filterMessage(request);
+                         });
 
     channelSMM = getSMMChannel();
     // wait until io->run is going to fetch RestrictionMode
@@ -130,8 +130,8 @@ void AllowlistFilter::cacheRestrictedAndPostCompleteMode()
 {
     try
     {
-        auto service = ipmi::getService(*bus, restrictionModeIntf,
-                                        restrictionModePath);
+        auto service =
+            ipmi::getService(*bus, restrictionModeIntf, restrictionModePath);
         ipmi::Value v =
             ipmi::getDbusProperty(*bus, service, restrictionModePath,
                                   restrictionModeIntf, "RestrictionMode");
@@ -149,11 +149,11 @@ void AllowlistFilter::cacheRestrictedAndPostCompleteMode()
 
     try
     {
-        auto service = ipmi::getService(*bus, systemOsStatusIntf,
-                                        systemOsStatusPath);
-        ipmi::Value v = ipmi::getDbusProperty(*bus, service, systemOsStatusPath,
-                                              systemOsStatusIntf,
-                                              "OperatingSystemState");
+        auto service =
+            ipmi::getService(*bus, systemOsStatusIntf, systemOsStatusPath);
+        ipmi::Value v =
+            ipmi::getDbusProperty(*bus, service, systemOsStatusPath,
+                                  systemOsStatusIntf, "OperatingSystemState");
         auto& value = std::get<std::string>(v);
         updatePostComplete(value);
         log<level::INFO>("Read POST complete value",
@@ -277,16 +277,16 @@ void AllowlistFilter::cacheCoreBiosDone()
 
     bus->async_method_call(
         [this](boost::system::error_code ec, const ipmi::Value& v) {
-        if (ec)
-        {
-            log<level::ERR>(
-                "async call failed, coreBIOSDone asserted as default");
-            return;
-        }
-        coreBIOSDone = std::get<bool>(v);
-        log<level::INFO>("Read CoreBiosDone",
-                         entry("VALUE=%d", static_cast<int>(coreBIOSDone)));
-    },
+            if (ec)
+            {
+                log<level::ERR>(
+                    "async call failed, coreBIOSDone asserted as default");
+                return;
+            }
+            coreBIOSDone = std::get<bool>(v);
+            log<level::INFO>("Read CoreBiosDone",
+                             entry("VALUE=%d", static_cast<int>(coreBIOSDone)));
+        },
         coreBiosDoneService, coreBiosDonePath,
         "org.freedesktop.DBus.Properties", "Get", hostMiscIntf, "CoreBiosDone");
 }
@@ -302,8 +302,8 @@ void AllowlistFilter::handleCoreBiosDoneChange(sdbusplus::message_t& msg)
         auto it =
             std::find_if(propertyList.begin(), propertyList.end(),
                          [](const std::pair<std::string, ipmi::Value>& prop) {
-            return prop.first == "CoreBiosDone";
-        });
+                             return prop.first == "CoreBiosDone";
+                         });
 
         if (it != propertyList.end())
         {
@@ -355,7 +355,7 @@ void AllowlistFilter::postInit()
 
     const std::string filterStrPostIntfAdd =
         rules::interfacesAdded() +
-        rules::argNpath(0, "/xyz/openbmc_project/state/os");
+        rules::argNpath(0, "/xyz/openbmc_project/state/host0");
 
     const std::string filterStrPlatStateChange =
         rules::type::signal() + rules::member("PropertiesChanged") +
