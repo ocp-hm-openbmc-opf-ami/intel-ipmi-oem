@@ -19,7 +19,7 @@
 #include "xyz/openbmc_project/Common/error.hpp"
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
 
-#include <fcntl.h>
+https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git#include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
 #include <netinet/ether.h>
@@ -40,7 +40,7 @@
 #include <boost/process/io.hpp>
 #include <com/intel/Control/OCOTShutdownPolicy/server.hpp>
 #include <commandutils.hpp>
-#include <gpiod.hpp>
+#include <gpiod.hpp>https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
 #include <nlohmann/json.hpp>
@@ -82,7 +82,7 @@ namespace ipmi
 static constexpr uint16_t USB_VENDOR_ID = 0x0525;
 static constexpr uint16_t USB_PRODUCT_ID = 0xA4A2;
 static constexpr uint8_t USB_SERIAL_NUM = 0x00;
-
+https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git
 // Network object in dbus
 static constexpr auto networkServiceName = "xyz.openbmc_project.Network";
 static constexpr auto networkConfigObj = "/xyz/openbmc_project/network/config";
@@ -3938,6 +3938,7 @@ ipmi::RspType<uint4_t, // domain ID
     [[maybe_unused]] constexpr uint8_t platformPower = 0;
     constexpr uint8_t inletAirTemp = 1;
     constexpr uint8_t iccTdc = 2;
+    constexpr  Cc ccSensorInvalid = 0xCB;
 
     if ((static_cast<uint8_t>(readingType) > iccTdc) || domainId || reserved)
     {
@@ -3947,12 +3948,12 @@ ipmi::RspType<uint4_t, // domain ID
     // This command should run only from multi-node product.
     // For all other platforms this command will return invalid.
 
-    std::optional<uint8_t> nodeInfo =
+    /*std::optional<uint8_t> nodeInfo =
         getMultiNodeInfoPresence(ctx, "NodePresence");
     if (!nodeInfo || !*nodeInfo)
     {
         return ipmi::responseInvalidCommand();
-    }
+    }*/
 
     uint16_t oemReadingValue = 0;
     if (static_cast<uint8_t>(readingType) == inletAirTemp)
@@ -3967,15 +3968,32 @@ ipmi::RspType<uint4_t, // domain ID
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "Failed to get BMC Get OEM temperature",
                 phosphor::logging::entry("EXCEPTION=%s", ec.message().c_str()));
-            return ipmi::responseUnspecifiedError();
+            return ipmi::response(ccSensorInvalid);
         }
         // Take the Inlet temperature
         oemReadingValue = static_cast<uint16_t>(value);
     }
+    	else if (static_cast<uint8_t>(readingType) == platformPower)//plt power
+	{
+	double value = 0;
+	boost::system::error_code ec = ipmi::getDbusProperty(
+			ctx, "xyz.openbmc_project.IntelCPUSensor",
+			"/xyz/openbmc_project/sensors/power/Platform_Power_Average_CPU1",
+			"xyz.openbmc_project.Sensor.Value", "Value", value);
+	 	if (ec)
+	       {
+		phosphor::logging::log<phosphor::logging::level::ERR>(
+				"Failed to get BMC Get Platform Power",
+				phosphor::logging::entry("EXCEPTION=%s", ec.message().c_str()));
+		return ipmi::response(ccSensorInvalid);
+	       }     
+	// Take the Platform Power
+	oemReadingValue = static_cast<uint16_t>(value);
+	}
     else
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Currently Get OEM Reading support only for Inlet Air Temp");
+            "Currently Get OEM Reading support only for Inlet Air Temp And Platform Power");
         return ipmi::responseParmOutOfRange();
     }
     return ipmi::responseSuccess(domainId, readingType, oemReadingValue);
