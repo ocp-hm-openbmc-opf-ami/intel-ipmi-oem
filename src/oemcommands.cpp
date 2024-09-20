@@ -4451,6 +4451,11 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx,
             {
                 return ipmi::responseInvalidFieldRequest();
             }
+            uint8_t size = recipient.size();
+            if (index > size)
+            {
+                return ipmi::responseResponseError();
+            }
             std::string str = recipient[index - 1];
             if (str.empty())
             {
