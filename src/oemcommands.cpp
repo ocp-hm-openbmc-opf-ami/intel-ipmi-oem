@@ -19,7 +19,7 @@
 #include "xyz/openbmc_project/Common/error.hpp"
 #include "xyz/openbmc_project/Led/Physical/server.hpp"
 
-https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git#include <fcntl.h>
+#include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
 #include <netinet/ether.h>
@@ -40,7 +40,7 @@ https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git#include <fcntl
 #include <boost/process/io.hpp>
 #include <com/intel/Control/OCOTShutdownPolicy/server.hpp>
 #include <commandutils.hpp>
-#include <gpiod.hpp>https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git
+#include <gpiod.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/utils.hpp>
 #include <nlohmann/json.hpp>
@@ -82,7 +82,7 @@ namespace ipmi
 static constexpr uint16_t USB_VENDOR_ID = 0x0525;
 static constexpr uint16_t USB_PRODUCT_ID = 0xA4A2;
 static constexpr uint8_t USB_SERIAL_NUM = 0x00;
-https://git.ami.com/core/ami-bmc/one-tree/core/intel-ipmi-oem.git
+
 // Network object in dbus
 static constexpr auto networkServiceName = "xyz.openbmc_project.Network";
 static constexpr auto networkConfigObj = "/xyz/openbmc_project/network/config";
