@@ -136,6 +136,9 @@ static void registerOEMFunctions() __attribute__((constructor));
 
 static constexpr size_t maxFRUStringLength = 0x3F;
 
+// BIOS PostCode return error code
+static constexpr Cc ipmiCCBIOSPostCodeError = 0x89;
+
 // HI Certificate FingerPrint error code
 static constexpr Cc ipmiCCBootStrappingDisabled = 0x80;
 static constexpr Cc ipmiCCCertificateNumberInvalid = 0xCB;
@@ -185,6 +188,22 @@ static constexpr auto cancelTask =
     "xyz.openbmc_project.Common.Task.OperationStatus.Cancelled";
 static constexpr auto newTask =
     "xyz.openbmc_project.Common.Task.OperationStatus.New";
+
+// BIOS PostCode object in dbus
+static constexpr const char* postCodesService =
+    "xyz.openbmc_project.State.Boot.PostCode0";
+static constexpr const char* postCodesObjPath =
+    "/xyz/openbmc_project/State/Boot/PostCode0";
+static constexpr const char* postCodesIntf =
+    "xyz.openbmc_project.State.Boot.PostCode";
+const static constexpr char* postCodesProp = "CurrentBootCycleCount";
+
+static constexpr const char* chassisStateService =
+    "xyz.openbmc_project.State.Chassis";
+static constexpr const char* chassisStatePath =
+    "/xyz/openbmc_project/state/chassis0";
+static constexpr const char* chassisStateIntf =
+    "xyz.openbmc_project.State.Chassis";
 
 enum class NmiSource : uint8_t
 {
@@ -7068,6 +7087,92 @@ ipmi::RspType<uint8_t>
     return ipmi::responseSuccess();
 }
 
+/** @brief Get the latest boot cycle's POST Code, if there is one.
+ ** @param[in] ctx   - ipmi Context point
+ ** @return   Boot Cycle indes, Post Code length, POST Code vector
+ **/
+ipmi::RspType<uint16_t, uint16_t, std::vector<uint8_t>> ipmiGetBiosPostCode()
+{
+    using namespace ipmi::ami::general;
+    uint64_t pcode = 0;
+    uint16_t bootIndex = 1; // 1 for the latest boot cycle's POST Code
+    uint16_t postVecLen = 0;
+    uint16_t postVecStart = 0;
+    uint16_t postRetLen = 0;
+    using postcode_t = std::tuple<uint64_t, std::vector<uint8_t>>;
+    postcode_t postCodeTup(0, {0});
+    std::vector<postcode_t> postCodeVector = {};
+    std::vector<uint8_t> postCodeVectorRet = {};
+
+    // to get the oldest POST Code
+    // getBIOSbootCycCount(bootIndex);
+
+    try
+    {
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+        // if chassis in power off state, return error code
+        auto powerState =
+            ipmi::getDbusProperty(*dbus, chassisStateService, chassisStatePath,
+                                  chassisStateIntf, "CurrentPowerState");
+        if (std::get<std::string>(powerState) ==
+            "xyz.openbmc_project.State.Chassis.PowerState.Off")
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Host is in power off state");
+            return ipmi::response(ipmiCCBIOSPostCodeError);
+        }
+
+        std::string service = getService(*dbus, postCodesIntf,
+                                         postCodesObjPath);
+        // call POST Code Service method
+        auto method = dbus->new_method_call(postCodesService, postCodesObjPath,
+                                            postCodesIntf, "GetPostCodes");
+        method.append(bootIndex);
+        auto postCodesMsgRet = dbus->call(method);
+        if (postCodesMsgRet.is_method_error())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error returns from call to dbus.");
+            return ipmi::response(ipmiCCBIOSPostCodeError);
+        }
+
+        postCodesMsgRet.read(postCodeVector);
+        if (postCodeVector.empty())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "No post code is found from call to dbus.");
+            return ipmi::response(ipmiCCBIOSPostCodeError);
+        }
+
+        postVecLen = postCodeVector.size();
+
+        if (postVecLen <= cmdGetBiosPostCodeToIpmiMaxSize)
+            postVecStart = 0;
+        else
+        {
+            // adjust the start position so the end-portion of post code is sent
+            postVecStart = postVecLen - cmdGetBiosPostCodeToIpmiMaxSize;
+        }
+
+        for (int i = postVecStart; i < postVecLen; i++)
+        {
+            postCodeTup = postCodeVector[i];
+            pcode = std::get<0>(postCodeTup);
+            postCodeVectorRet.push_back(pcode);
+            // sd_journal_print(LOG_ERR, "0x%02llx ", pcode);
+        }
+
+        postRetLen = postCodeVectorRet.size();
+        return ipmi::responseSuccess(bootIndex, postRetLen, postCodeVectorRet);
+    }
+    catch (const std::exception& e)
+    {
+        return ipmi::response(ipmiCCBIOSPostCodeError);
+    }
+
+    return ipmi::response(ipmiCCBIOSPostCodeError);
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -7304,6 +7409,11 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetSNMPstatus, Privilege::User,
                     ipmiOEMGetSNMPStatus);
+
+    // GetBiosPostCodes
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetBiosPostCode, Privilege::User,
+                    ipmiGetBiosPostCode);
 
     // <Get USB Description>
     log<level::NOTICE>(
