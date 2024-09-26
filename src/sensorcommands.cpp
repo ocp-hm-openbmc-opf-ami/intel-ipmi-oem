@@ -1930,6 +1930,69 @@ static ipmi::RspType<uint8_t, // respcount
                                  sdrLastAdd);
 }
 
+ipmi::RspType<uint8_t, // Action Supported
+              uint8_t,
+              uint8_t // No of Event Filtering Table Entries
+              >
+    ipmiSenGetPefCapabilities([[maybe_unused]] ipmi::Context::ptr ctx)
+{
+    uint8_t pefVersion = 0;
+    uint8_t actionSupported = 0;
+    uint8_t eveFltTblEntiesCount = 0;
+
+    PropertyMap pefCfgValues;
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    auto method = bus.new_method_call(pefBus, pefObj, PROP_INTF,
+                                      METHOD_GET_ALL);
+    method.append(pefConfInfoIntf);
+    auto reply = bus.call(method);
+    if (reply.is_method_error())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get all Event Filtering properties");
+    }
+    try
+    {
+        reply.read(pefCfgValues);
+    }
+    catch (const std::exception&)
+    {
+        return ipmi::responseResponseError();
+    }
+
+    static constexpr auto pefver = "ipmiPefVersion";
+    static constexpr auto ActionSupported = "actionSupported";
+    static constexpr auto MaxTblEntry = "maxEventTblEntry";
+
+    auto iterId = pefCfgValues.find(pefver);
+    if (iterId == pefCfgValues.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get PEF Version");
+    }
+    pefVersion = static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
+
+    iterId = pefCfgValues.find(ActionSupported);
+    if (iterId == pefCfgValues.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get ActionSupported Value");
+    }
+    actionSupported = static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
+
+    iterId = pefCfgValues.find(MaxTblEntry);
+    if (iterId == pefCfgValues.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get EventTable Entries Value");
+    }
+    eveFltTblEntiesCount =
+        static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
+
+    return ipmi::responseSuccess(pefVersion, actionSupported,
+                                 eveFltTblEntiesCount);
+}
+
 /* end sensor commands */
 
 /* storage commands */
@@ -2198,6 +2261,10 @@ void registerSensorFunctions()
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdGetSensorEventStatus,
                           ipmi::Privilege::User, ipmiSenGetSensorEventStatus);
+    // <PEF Get Capabilities>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdGetPefCapabilities,
+                          ipmi::Privilege::Operator, ipmiSenGetPefCapabilities);
 
     // register all storage commands for both Sensor and Storage command
     // versions

@@ -22,6 +22,19 @@
 
 #pragma pack(push, 1)
 
+using DbusProperty = std::string;
+using Value =
+    std::variant<uint8_t, uint16_t, std::string, std::vector<std::string>>;
+using PropertyMap = std::map<DbusProperty, Value>;
+
+static constexpr const char* pefBus = "xyz.openbmc_project.pef.alert.manager";
+static constexpr const char* pefObj = "/xyz/openbmc_project/PefAlertManager";
+static constexpr const char* pefDbusIntf =
+    "xyz.openbmc_project.pef.configurations";
+static constexpr const char* pefConfInfoIntf =
+    "xyz.openbmc_project.pef.PEFConfInfo";
+constexpr auto PROP_INTF = "org.freedesktop.DBus.Properties";
+
 struct SensorThresholdResp
 {
     uint8_t readable;
