@@ -34,6 +34,12 @@ static constexpr const char* pefDbusIntf =
 static constexpr const char* pefConfInfoIntf =
     "xyz.openbmc_project.pef.PEFConfInfo";
 constexpr auto PROP_INTF = "org.freedesktop.DBus.Properties";
+static constexpr const char* pefPostponeTmrObj =
+    "/xyz/openbmc_project/PefAlertManager/ArmPostponeTimer";
+static constexpr const char* pefPostponeTmrIface =
+    "xyz.openbmc_project.pef.PEFPostponeTimer";
+static constexpr const char* pefPostponeCountDownIface =
+    "xyz.openbmc_project.pef.CountdownTmr";
 
 struct SensorThresholdResp
 {

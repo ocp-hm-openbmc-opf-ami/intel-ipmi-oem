@@ -1993,6 +1993,89 @@ ipmi::RspType<uint8_t, // Action Supported
                                  eveFltTblEntiesCount);
 }
 
+ipmi::RspType<uint8_t> // Present Timer Countdown Value
+    ipmiSenArmPEFpostponeTimer(uint8_t pefPostponeTimer)
+{
+    uint8_t CountdownTmrValue;
+    static constexpr auto CountdownValue = "TmrCountdownValue";
+
+    // Set the Value to DBUS
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    try
+    {
+        ipmi::setDbusProperty(*dbus, pefBus, pefPostponeTmrObj,
+                              pefPostponeTmrIface, "ArmPEFPostponeTmr",
+                              pefPostponeTimer);
+    }
+
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to update Timer Value");
+        return ipmi::responseUnspecifiedError();
+    }
+
+    // Get the value of PefPostpone timer in DBUS
+    PropertyMap pefCfgValues;
+    sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
+    auto method = bus.new_method_call(pefBus, pefPostponeTmrObj, PROP_INTF,
+                                      METHOD_GET_ALL);
+    method.append(pefPostponeCountDownIface);
+    auto reply = bus.call(method);
+    if (reply.is_method_error())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get Countdown property");
+    }
+    try
+    {
+        reply.read(pefCfgValues);
+    }
+    catch (const std::exception&)
+    {
+        return ipmi::responseResponseError();
+    }
+
+    auto iterId = pefCfgValues.find(CountdownValue);
+    if (iterId == pefCfgValues.end())
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get PEF Version");
+    }
+    CountdownTmrValue = static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
+
+    // Checking Conditions as per the ipmi Specification
+    if ((pefPostponeTimer == 0x00) ||
+        ((pefPostponeTimer != 0xFE) && (pefPostponeTimer = !0xFF)))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Postpone Timer is Disabled");
+    }
+
+    if ((pefPostponeTimer != 0xFE) && (pefPostponeTimer != 0x00) &&
+        (pefPostponeTimer = !0xFF))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "PEF Task is Disabled by Postpone Timer and Starting Countdown Timer Value ");
+    }
+
+    if ((pefPostponeTimer == 0xFE) ||
+        ((pefPostponeTimer != 0x00) && (pefPostponeTimer = !0xFF)))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "PEF Task is Disabled by Postpone Timer");
+    }
+
+    if ((pefPostponeTimer == 0xFF) ||
+        ((pefPostponeTimer != 0x00) && (pefPostponeTimer = !0xFE)))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Get the Current Countdown Value");
+    }
+
+    return ipmi::responseSuccess(CountdownTmrValue);
+}
+
 /* end sensor commands */
 
 /* storage commands */
@@ -2261,10 +2344,17 @@ void registerSensorFunctions()
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdGetSensorEventStatus,
                           ipmi::Privilege::User, ipmiSenGetSensorEventStatus);
+
     // <PEF Get Capabilities>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdGetPefCapabilities,
-                          ipmi::Privilege::Operator, ipmiSenGetPefCapabilities);
+                          ipmi::Privilege::User, ipmiSenGetPefCapabilities);
+
+    // <Arm PEF Postpone Timer>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdArmPefPostponeTimer,
+                          ipmi::Privilege::Operator,
+                          ipmiSenArmPEFpostponeTimer);
 
     // register all storage commands for both Sensor and Storage command
     // versions
