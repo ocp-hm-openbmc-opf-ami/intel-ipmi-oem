@@ -27,6 +27,32 @@ using Value =
     std::variant<uint8_t, uint16_t, std::string, std::vector<std::string>>;
 using PropertyMap = std::map<DbusProperty, Value>;
 
+enum class PEFConfParam : uint8_t
+{
+    SetInProgress = 0x0,
+    PEFControl = 0x1,
+    PEFActionGlobalControl = 0x2,
+    PEFStartupDelay = 0x3,
+    PEFAlertStartupDelay = 0x4,
+    NumEventFilter = 0x5,
+    EventFilterTable = 0x6,
+    EventFilterTableData1 = 0x7,
+    NumAlertPolicyTable = 0x8,
+    AlertPolicyTable = 0x9,
+    SystemGUID = 0xA,
+    NumAlertString = 0xB,
+    AlertStringKey = 0xC,
+    AlertString = 0xD,
+    NumGrpCtlTableEntries = 0xE,
+};
+
+// static constexpr uint8_t ipmiPefVersion = 0x51;
+static constexpr uint8_t maxEventTblEntry = 0x40;
+static constexpr uint8_t maxAlertPolicyEntry = 0x3c;
+static constexpr uint8_t ipmiPefParamVer = 0x11;
+static constexpr uint8_t EventData0 = 0x00;
+static constexpr uint8_t EventData1 = 0x01;
+
 static constexpr const char* pefBus = "xyz.openbmc_project.pef.alert.manager";
 static constexpr const char* pefObj = "/xyz/openbmc_project/PefAlertManager";
 static constexpr const char* pefDbusIntf =
@@ -40,6 +66,14 @@ static constexpr const char* pefPostponeTmrIface =
     "xyz.openbmc_project.pef.PEFPostponeTimer";
 static constexpr const char* pefPostponeCountDownIface =
     "xyz.openbmc_project.pef.CountdownTmr";
+static constexpr const char* eventFilterTableObj =
+    "/xyz/openbmc_project/PefAlertManager/EventFilterTable/Entry";
+static constexpr const char* eventFilterTableIntf =
+    "xyz.openbmc_project.pef.EventFilterTable";
+static constexpr const char* alertPolicyTableObj =
+    "/xyz/openbmc_project/PefAlertManager/AlertPolicyTable/Entry";
+static constexpr const char* alertPolicyTableIntf =
+    "xyz.openbmc_project.pef.AlertPolicyTable";
 
 struct SensorThresholdResp
 {

@@ -2076,6 +2076,641 @@ ipmi::RspType<uint8_t> // Present Timer Countdown Value
     return ipmi::responseSuccess(CountdownTmrValue);
 }
 
+ipmi::RspType<uint8_t,             // ParameterVersion
+              std::vector<uint8_t> // ParamData
+              >
+    ipmiPefGetConfParamCmd([[maybe_unused]] ipmi::Context::ptr ctx,
+                           uint8_t ParamSelector, uint8_t setSelector,
+                           uint8_t blockSelector)
+{
+    uint8_t paraVer = 0;
+    uint8_t paraData = 0;
+    uint8_t setSel = 0;
+    std::vector<uint8_t> paraDataByte{};
+    paraVer = ipmiPefParamVer;
+    setSel = setSelector;
+    if (((ParamSelector >> 7) & EventData1) == EventData1)
+    {
+        return ipmi::responseSuccess(paraVer, paraDataByte);
+    }
+
+    ParamSelector = ParamSelector & 0x7F;
+    switch (PEFConfParam(ParamSelector))
+    {
+        case PEFConfParam::SetInProgress:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            paraData = pefSetInPro;
+            paraDataByte.push_back(paraData);
+            break;
+        }
+
+        case PEFConfParam::PEFControl:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                Value variant = ipmi::getDbusProperty(
+                    *dbus, pefBus, pefObj, pefConfInfoIntf, "PEFControl");
+                paraData = std::get<uint8_t>(variant);
+                paraDataByte.push_back(paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get PEFControl property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFActionGlobalControl:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                Value variant = ipmi::getDbusProperty(*dbus, pefBus, pefObj,
+                                                      pefConfInfoIntf,
+                                                      "PEFActionGblControl");
+                paraData = std::get<uint8_t>(variant);
+                paraDataByte.push_back(paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get PEFActionGblControl property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFStartupDelay:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                Value variant = ipmi::getDbusProperty(
+                    *dbus, pefBus, pefObj, pefConfInfoIntf, "PEFStartupDly");
+                paraData = std::get<uint8_t>(variant);
+                paraDataByte.push_back(paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get PEFStartupDly property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFAlertStartupDelay:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                Value variant = ipmi::getDbusProperty(*dbus, pefBus, pefObj,
+                                                      pefConfInfoIntf,
+                                                      "PEFAlertStartupDly");
+                paraData = std::get<uint8_t>(variant);
+                paraDataByte.push_back(paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get PEFAlertStartupDly property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::NumEventFilter:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            paraData = maxEventTblEntry;
+            paraDataByte.push_back(paraData);
+            break;
+        }
+        case PEFConfParam::EventFilterTable:
+        {
+            if (setSel == EventData0)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (setSel > maxEventTblEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+            uint8_t offsetMask1 = 0, offsetMask2 = 0;
+            uint16_t eveData1OffsetMask;
+            std::string pefEveObjEntry = eventFilterTableObj +
+                                         std::to_string(setSel);
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::PropertyMap result = ipmi::getAllDbusProperties(
+                    *dbus, pefBus, pefEveObjEntry, eventFilterTableIntf);
+                paraDataByte.push_back(setSel);
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("FilterConfig")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EvtFilterAction")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("AlertPolicyNum")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventSeverity")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("GenIDByte1")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("GenIDByte2")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("SensorType")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("SensorNum")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventTrigger")));
+                eveData1OffsetMask =
+                    std::get<uint16_t>(result.at("EventData1OffsetMask"));
+                offsetMask1 = ((eveData1OffsetMask >> 8) & 0xff);
+                offsetMask2 = (eveData1OffsetMask & 0xff);
+                paraDataByte.push_back(offsetMask1);
+                paraDataByte.push_back(offsetMask2);
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData1ANDMask")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData1Cmp1")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData1Cmp2")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData2ANDMask")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData2Cmp1")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData2Cmp2")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData3ANDMask")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData3Cmp1")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("EventData3Cmp2")));
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get all eventFilter Entry property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::EventFilterTableData1:
+        {
+            if (setSel == EventData0)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (setSel > maxEventTblEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+            std::string pefEveObjEntry = eventFilterTableObj +
+                                         std::to_string(setSel);
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                Value variant =
+                    ipmi::getDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                          eventFilterTableIntf, "FilterConfig");
+                paraData = std::get<uint8_t>(variant);
+                paraDataByte.push_back(setSel);
+                paraDataByte.push_back(paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get Filter config property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::NumAlertPolicyTable:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            paraData = maxAlertPolicyEntry;
+            paraDataByte.push_back(paraData);
+            break;
+        }
+        case PEFConfParam::AlertPolicyTable:
+        {
+            if (setSel == EventData0)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (setSel > maxAlertPolicyEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+            std::string pefAlertObjEntry = alertPolicyTableObj +
+                                           std::to_string(setSel);
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::PropertyMap result = ipmi::getAllDbusProperties(
+                    *dbus, pefBus, pefAlertObjEntry, alertPolicyTableIntf);
+                paraDataByte.push_back(setSel);
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("AlertNum")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("ChannelDestSel")));
+                paraDataByte.push_back(
+                    std::get<uint8_t>(result.at("AlertStingkey")));
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to get all AlertPolicy Entry property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+
+        default:
+            return ipmi::responseParmNotSupported();
+    }
+    return ipmi::responseSuccess(paraVer, paraDataByte);
+}
+
+ipmi::RspType<> ipmiPefSetConfParamCmd([[maybe_unused]] ipmi::Context::ptr ctx,
+                                       uint8_t ParamSelector,
+                                       ipmi::message::Payload& payload)
+{
+    uint8_t paraData = 0;
+    uint8_t reserveBit1 = 0x80;
+    uint8_t reserveBit2 = 0x40;
+    uint8_t PEFControlValue = 0xF0;
+    uint8_t EventData1 = 0x01;
+    if (((ParamSelector >> 7) & EventData1) == EventData1)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    ParamSelector = ParamSelector & 0x7F;
+    if ((ParamSelector == static_cast<uint8_t>(PEFConfParam::NumEventFilter)) ||
+        (ParamSelector ==
+         static_cast<uint8_t>(PEFConfParam::NumAlertPolicyTable)))
+    {
+        return ipmi::responseReadOnlyParameter();
+    }
+    switch (PEFConfParam(ParamSelector))
+    {
+        case PEFConfParam::SetInProgress:
+        {
+            uint8_t SetComplete = 0x00;
+            uint8_t SetInProgress = 0x01;
+            if (payload.unpack(paraData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if ((paraData != SetComplete) && (paraData != SetInProgress))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            pefSetInPro = paraData;
+            break;
+        }
+        case PEFConfParam::PEFControl:
+        {
+            if (payload.unpack(paraData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if ((paraData & PEFControlValue))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefObj, pefConfInfoIntf,
+                                      "PEFControl", paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set PEFControl property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFActionGlobalControl:
+        {
+            if (payload.unpack(paraData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if ((paraData & reserveBit1) || (paraData & reserveBit2))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefObj, pefConfInfoIntf,
+                                      "PEFActionGblControl", paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set PEFActionGblControl property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFStartupDelay:
+        {
+            if (payload.unpack(paraData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefObj, pefConfInfoIntf,
+                                      "PEFStartupDly", paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set PEFStartupDly property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::PEFAlertStartupDelay:
+        {
+            if (payload.unpack(paraData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefObj, pefConfInfoIntf,
+                                      "PEFAlertStartupDly", paraData);
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set PEFAlertStartupDly property",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::EventFilterTable:
+        {
+            std::vector<uint8_t> entryData;
+            uint16_t offsetMask = 0, tmpOffsetMask = 0;
+            // uint8_t maxEventTblEntry = 0x40;
+            uint8_t evenSevtmp;
+            if (payload.unpack(entryData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+
+            if (entryData.size() > 21 || entryData.size() < 21)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+
+            if (entryData.at(0) == 0x00)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            if (entryData.at(0) > maxEventTblEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            if (((entryData.at(1) & 0x1f) != 0) ||
+                (((entryData.at(1) >> 5) & 0x03) == 0x03) ||
+                (((entryData.at(1) >> 5) & EventData1) == EventData1))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            if ((((entryData.at(2) >> 7) & EventData1) == EventData1) ||
+                (((entryData.at(3) >> 7) & EventData1) == EventData1))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            evenSevtmp = entryData.at(4);
+            if ((((~evenSevtmp) + 1) & entryData.at(4)) != entryData.at(4))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            std::string pefEveObjEntry = eventFilterTableObj +
+                                         std::to_string(entryData.at(0));
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "FilterConfig",
+                                      entryData.at(1));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EvtFilterAction",
+                                      entryData.at(2));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "AlertPolicyNum",
+                                      entryData.at(3));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventSeverity",
+                                      entryData.at(4));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "GenIDByte1",
+                                      entryData.at(5));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "GenIDByte2",
+                                      entryData.at(6));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "SensorType",
+                                      entryData.at(7));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "SensorNum",
+                                      entryData.at(8));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventTrigger",
+                                      entryData.at(9));
+                tmpOffsetMask = entryData.at(10);
+                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(11) & 0xff));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf,
+                                      "EventData1OffsetMask", offsetMask);
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData1ANDMask",
+                                      entryData.at(12));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData1Cmp1",
+                                      entryData.at(13));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData1Cmp2",
+                                      entryData.at(14));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData2ANDMask",
+                                      entryData.at(15));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData2Cmp1",
+                                      entryData.at(16));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData2Cmp2",
+                                      entryData.at(17));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData3ANDMask",
+                                      entryData.at(18));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData3Cmp1",
+                                      entryData.at(19));
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "EventData3Cmp2",
+                                      entryData.at(20));
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set Event filtering properties",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::EventFilterTableData1:
+        {
+            std::vector<uint8_t> entryData;
+            if (payload.unpack(entryData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if (entryData.size() > 2 || entryData.size() < 2)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if (entryData.at(0) == 0x00)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (entryData.at(0) > maxEventTblEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+            if (((entryData.at(1) & 0x1f) != 0) ||
+                (((entryData.at(1) >> 5) & 0x03) == 0x03) ||
+                (((entryData.at(1) >> 5) & EventData1) == EventData1))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            std::string pefEveObjEntry = eventFilterTableObj +
+                                         std::to_string(entryData.at(0));
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                                      eventFilterTableIntf, "FilterConfig",
+                                      entryData.at(1));
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set FilterConfig data",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::AlertPolicyTable:
+        {
+            std::vector<uint8_t> entryData;
+            uint8_t NumAlertPolicyEntry = 0x07;
+            if (payload.unpack(entryData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if (entryData.size() > 4 || entryData.size() < 4)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            if ((entryData.at(0) == 0x00) ||
+                ((entryData.at(0) & reserveBit1) == reserveBit1) ||
+                ((entryData.at(1) & NumAlertPolicyEntry) > 4) ||
+                ((entryData.at(1) & PEFControlValue) == 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (entryData.at(0) > maxAlertPolicyEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            std::string pefAlertObjEntry = alertPolicyTableObj +
+                                           std::to_string(entryData.at(0));
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+            try
+            {
+                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
+                                      alertPolicyTableIntf, "AlertNum",
+                                      entryData.at(1));
+                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
+                                      alertPolicyTableIntf, "ChannelDestSel",
+                                      entryData.at(2));
+                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
+                                      alertPolicyTableIntf, "AlertStingkey",
+                                      entryData.at(3));
+            }
+            catch (std::exception& e)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Failed to set Alert Policy properties",
+                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        default:
+            return ipmi::responseParmNotSupported();
+    }
+    return ipmi::responseSuccess();
+}
+
 /* end sensor commands */
 
 /* storage commands */
@@ -2355,6 +2990,15 @@ void registerSensorFunctions()
                           ipmi::sensor_event::cmdArmPefPostponeTimer,
                           ipmi::Privilege::Operator,
                           ipmiSenArmPEFpostponeTimer);
+    //<Get PEF Configuration Parameter>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdGetPefConfigurationParams,
+                          ipmi::Privilege::Operator, ipmiPefGetConfParamCmd);
+
+    //<Set PEF Configuration Parameter>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdSetPefConfigurationParams,
+                          ipmi::Privilege::Operator, ipmiPefSetConfParamCmd);
 
     // register all storage commands for both Sensor and Storage command
     // versions
