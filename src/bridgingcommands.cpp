@@ -755,7 +755,7 @@ std::vector<uint8_t> convertVector(const std::string_view& str)
  */
 ipmi::RspType<uint16_t,             // Record ID
               uint8_t,              // Record Type
-              uint64_t,             // Timestamp
+              uint32_t,             // Timestamp
               uint16_t,             // Generator ID
               uint8_t,              // EVM Rev
               uint8_t,              // Sensor Type
@@ -876,14 +876,17 @@ ipmi::RspType<uint16_t,             // Record ID
         {
             return ipmi::responseUnspecifiedError();
         }
-        auto recordId = std::get<uint16_t>(SelIdtimestamp["Id"]);
-        auto timestamp = std::get<uint64_t>(SelIdtimestamp["Timestamp"]);
-        auto recordType = static_cast<uint8_t>(convertData(ret[recordTypestr]));
-        auto eventDir = static_cast<uint8_t>(convertData(ret[eventDirstr]));
-        auto generatorId =
+        uint16_t recordId = std::get<uint16_t>(SelIdtimestamp["Id"]);
+        uint64_t timestamp64 = std::get<uint64_t>(SelIdtimestamp["Timestamp"]);
+        //convert 64 bit timestamp to 32 bit.
+        uint32_t timestamp = static_cast<uint32_t>(timestamp64 & 0xFFFFFFFF);
+
+        uint8_t recordType = static_cast<uint8_t>(convertData(ret[recordTypestr]));
+        uint8_t eventDir = static_cast<uint8_t>(convertData(ret[eventDirstr]));
+        uint16_t generatorId =
             static_cast<uint16_t>(convertData(ret[generateIdstr]));
         std::vector<uint8_t> sensorData = (convertVector(ret[sensorEventData]));
-        auto sensorType = static_cast<uint8_t>(convertData(ret[sensorTypestr]));
+        uint8_t sensorType = static_cast<uint8_t>(convertData(ret[sensorTypestr]));
         constexpr uint8_t eventMsgFormatRev = 0x3A;
         constexpr uint8_t sensorNumber = 0xFF;
 
