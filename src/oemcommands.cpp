@@ -7253,7 +7253,7 @@ static void registerOEMFunctions(void)
     // <Set Firewall Configuration>
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMSetFirewallConfiguration,
-                    Privilege::User, ipmiOEMSetFirewallConfiguration);
+                    Privilege::Admin, ipmiOEMSetFirewallConfiguration);
 
     // // <Get Firewall Configuration>
     registerHandler(prioOemBase, ami::netFnGeneral,
@@ -7262,7 +7262,7 @@ static void registerOEMFunctions(void)
 
     // <Set SMTP Config>
     registerHandler(prioOemBase, intel::netFnGeneral,
-                    intel::general::cmdOEMSetSmtpConfig, Privilege::User,
+                    intel::general::cmdOEMSetSmtpConfig, Privilege::Admin,
                     ipmiOEMSetSmtpConfig);
 
     // <Get SMTP Config>
@@ -7272,7 +7272,7 @@ static void registerOEMFunctions(void)
 
     // <Set SEL Policy>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMSetSELPolicy, Privilege::User,
+                    ami::general::cmdOEMSetSELPolicy, Privilege::Admin,
                     ipmiOEMSetSELPolicy);
 
     // <Get SEL Policy>
@@ -7287,17 +7287,17 @@ static void registerOEMFunctions(void)
 
     //<Set KCS Status>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMSetKCSStatus, Privilege::User,
+                    ami::general::cmdOEMSetKCSStatus, Privilege::Admin,
                     ipmiOEMSetKCSStatus);
 
     // <Cancel Task>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMCancelTask, Privilege::User,
+                    ami::general::cmdOEMCancelTask, Privilege::Admin,
                     ipmiOEMCancelTask);
 
     //<Set SNMP trap Status>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMSetSNMPStatus, Privilege::User,
+                    ami::general::cmdOEMSetSNMPStatus, Privilege::Admin,
                     ipmiOEMSetSNMPStatus);
 
     // <Get SNMP trap Status>
@@ -7393,7 +7393,7 @@ static void registerOEMFunctions(void)
 
     //<TriggerScreenshot>
     registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMTriggerScreenshot, Privilege::User,
+                    ami::general::cmdOEMTriggerScreenshot, Privilege::Admin,
                     ipmiOEMTriggerScreenshot);
 
     // <Set KVM Session Timeout>
