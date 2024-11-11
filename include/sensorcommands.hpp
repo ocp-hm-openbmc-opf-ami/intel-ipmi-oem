@@ -22,6 +22,68 @@
 
 #pragma pack(push, 1)
 
+
+//specific response codes
+constexpr uint8_t ipmiCCParamNotSupported = 0x80;
+constexpr uint8_t ipmiCCParamReadOnly = 0x82;
+
+enum class PEFConfParam : uint8_t
+{
+    setInProgress = 0x0,
+    pefControl = 0x1,
+    pefActionGlobalControl = 0x2,
+    pefStartupDelay = 0x3,
+    pefAlertStartupDelay = 0x4,
+    numEventFilter = 0x5,
+    eventFilterTable = 0x6,
+    eventFilterTableData1 = 0x7,
+    numAlertPolicyTable = 0x8,
+    alertPolicyTable = 0x9,
+    systemGUID = 0xA,
+    numAlertString = 0xB,
+    alertStringKey = 0xC,
+    alertString = 0xD,
+    numGrpCtlTableEntries = 0xE,
+};
+
+static constexpr uint8_t maxEventTblEntry = 0x40;
+static constexpr uint8_t maxAlertPolicyEntry = 0x3c;
+static constexpr uint8_t ipmiPefParamVer = 0x11;
+static constexpr uint8_t eventData0 = 0x00;
+static constexpr uint8_t eventData1 = 0x01;
+static constexpr uint8_t pefDisable = 0x00;
+static constexpr uint8_t tempPefDisable = 0xFE;
+static constexpr uint8_t presentCwnValue = 0xff;
+static constexpr uint8_t reserveBit1 = 0x80;
+static constexpr uint8_t reserveBit2 = 0x40;
+static constexpr uint8_t pefControlValue = 0xF0;
+static constexpr uint8_t enableFilter = 0x7F;
+static constexpr uint8_t numAlertPolicyEntry = 0x07;
+static constexpr uint8_t flterConfigRrve1 = 0x1F;
+static constexpr uint8_t flterConfigRrve2 = 0x03;
+
+static constexpr const char* pefBus = "xyz.openbmc_project.pef.alert.manager";
+static constexpr const char* pefObj = "/xyz/openbmc_project/PefAlertManager";
+static constexpr const char* pefDbusIntf =
+    "xyz.openbmc_project.pef.configurations";
+static constexpr const char* pefConfInfoIntf =
+    "xyz.openbmc_project.pef.PEFConfInfo";
+constexpr auto PROP_INTF = "org.freedesktop.DBus.Properties";
+static constexpr const char* pefPostponeTmrObj =
+    "/xyz/openbmc_project/PefAlertManager/ArmPostponeTimer";
+static constexpr const char* pefPostponeTmrIface =
+    "xyz.openbmc_project.pef.PEFPostponeTimer";
+static constexpr const char* pefPostponeCountDownIface =
+    "xyz.openbmc_project.pef.CountdownTmr";
+static constexpr const char* eventFilterTableObj =
+    "/xyz/openbmc_project/PefAlertManager/EventFilterTable/Entry";
+static constexpr const char* eventFilterTableIntf =
+    "xyz.openbmc_project.pef.EventFilterTable";
+static constexpr const char* alertPolicyTableObj =
+    "/xyz/openbmc_project/PefAlertManager/AlertPolicyTable/Entry";
+static constexpr const char* alertPolicyTableIntf =
+    "xyz.openbmc_project.pef.AlertPolicyTable";
+
 struct SensorThresholdResp
 {
     uint8_t readable;
