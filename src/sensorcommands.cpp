@@ -1874,8 +1874,7 @@ static ipmi::RspType<uint8_t, // respcount
                 sdrCount++;
             }
         }
-        sdrCount +=
-            ipmi::storage::type12Count + ipmi::storage::nmDiscoverySDRCount;
+        sdrCount += ipmi::storage::type12Count;
     }
     else if (count.value_or(0) == getSensorCount)
     {
@@ -2733,9 +2732,8 @@ ipmi::RspType<uint8_t,  // sdr version
         return ipmi::response(ret);
     }
 
-    uint16_t recordCount =
-        getNumberOfSensors() + fruCount + ipmi::storage::type12Count +
-        ipmi::storage::nmDiscoverySDRCount;
+    uint16_t recordCount = getNumberOfSensors() + fruCount +
+                           ipmi::storage::type12Count;
 
     uint8_t operationSupport = static_cast<uint8_t>(
         SdrRepositoryInfoOps::overflow); // write not supported
