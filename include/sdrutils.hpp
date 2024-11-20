@@ -278,10 +278,11 @@ inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
                              "/xyz/openbmc_project/object_mapper",
                              "xyz.openbmc_project.ObjectMapper", "GetSubTree");
     static constexpr const auto depth = 2;
-    static constexpr std::array<const char*, 4> interfaces = {
+    static constexpr std::array<const char*, 5> interfaces = {
         "xyz.openbmc_project.Sensor.Value", "xyz.openbmc_project.Sensor.State",
         "xyz.openbmc_project.Sensor.Threshold.Warning",
-        "xyz.openbmc_project.Sensor.Threshold.Critical"};
+        "xyz.openbmc_project.Sensor.Threshold.Critical",
+        "xyz.openbmc_project.Sensor.Threshold.NonRecoverable"};
     mapperCall.append("/xyz/openbmc_project/sensors", depth, interfaces);
 
     try
