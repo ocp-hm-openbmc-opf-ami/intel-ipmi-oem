@@ -167,7 +167,7 @@ constexpr std::size_t operator""_MB(unsigned long long v)
 {
     return 1024u * 1024u * v;
 }
-static constexpr size_t maxFirmwareImageSize = 33_MB;
+static constexpr size_t maxFirmwareImageSize = 55_MB;
 
 static bool localDownloadInProgress(void)
 {
@@ -720,6 +720,7 @@ static int executeCmd(const char* path, ArgTypes&&... tArgs)
 static bool transferImageFromUsb(const std::string& uri)
 {
     bool ret = false;
+    std::error_code ec;
 
     phosphor::logging::log<phosphor::logging::level::INFO>(
         "Transfer Image From USB.",
@@ -728,7 +729,19 @@ static bool transferImageFromUsb(const std::string& uri)
     if (executeCmd(usbCtrlPath, "mount", fwUpdateUsbVolImage,
                    fwUpdateMountPoint) == 0)
     {
-        std::string usb_path = std::string(fwUpdateMountPoint) + "/" + uri;
+        std::string mount_path = std::string(fwUpdateMountPoint) + "/";
+        std::filesystem::copy(uri, fwUpdateMountPoint,
+                              std::filesystem::copy_options::overwrite_existing,
+                              ec);
+        if (ec.value())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "copy error...failed mount file copy");
+        }
+        std::size_t found = uri.find_last_of("/");
+        std::string fname = uri.substr(found + 1);
+
+        std::string usb_path = std::string(fwUpdateMountPoint) + "/" + fname;
         ret = transferImageFromFile(usb_path, false);
 
         executeCmd(usbCtrlPath, "cleanup", fwUpdateUsbVolImage,
