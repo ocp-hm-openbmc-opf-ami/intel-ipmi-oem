@@ -2559,8 +2559,8 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                 ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
                                       eventFilterTableIntf, "EventTrigger",
                                       entryData.at(9));
-                tmpOffsetMask = entryData.at(10);
-                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(11) & 0xff));
+                tmpOffsetMask = entryData.at(11);
+                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(10) & 0xff));
                 ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
                                       eventFilterTableIntf,
                                       "EventData1OffsetMask", offsetMask);
