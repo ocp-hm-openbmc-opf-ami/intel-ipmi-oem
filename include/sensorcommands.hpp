@@ -46,7 +46,7 @@ enum class PEFConfParam : uint8_t
     numGrpCtlTableEntries = 0xE,
 };
 
-static constexpr uint8_t maxEventTblEntry = 0x40;
+static constexpr uint8_t maxEventTblEntry = 0x28;
 static constexpr uint8_t maxAlertPolicyEntry = 0x3c;
 static constexpr uint8_t ipmiPefParamVer = 0x11;
 static constexpr uint8_t eventData0 = 0x00;
