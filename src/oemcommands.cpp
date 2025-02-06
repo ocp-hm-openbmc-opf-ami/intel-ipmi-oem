@@ -3581,7 +3581,7 @@ static constexpr auto bootModeIntf = "xyz.openbmc_project.Control.Boot.Mode";
 static constexpr auto bootSourceIntf =
     "xyz.openbmc_project.Control.Boot.Source";
 static constexpr auto enabledIntf = "xyz.openbmc_project.Object.Enable";
-static constexpr auto persistentObjPath =
+static constexpr auto bootObjPath =
     "/xyz/openbmc_project/control/host0/boot";
 static constexpr auto oneTimePath =
     "/xyz/openbmc_project/control/host0/boot/one_time";
@@ -3641,14 +3641,6 @@ ipmi::RspType<uint8_t,               // version
         Value variant = getDbusProperty(*dbus, service, oneTimePath,
                                         enabledIntf, oneTimeBootEnableProp);
         oneTimeEnabled = std::get<bool>(variant);
-
-        // get BootSource and BootMode properties
-        // according to oneTimeEnable
-        auto bootObjPath = oneTimePath;
-        if (oneTimeEnabled == false)
-        {
-            bootObjPath = persistentObjPath;
-        }
 
         service = getService(*dbus, bootModeIntf, bootObjPath);
         variant = getDbusProperty(*dbus, service, bootObjPath, bootModeIntf,
@@ -3766,13 +3758,6 @@ ipmi::RspType<> ipmiOemSetEfiBootOptions(uint8_t bootFlag, uint8_t bootParam,
                             oneTimeBootEnableProp, !permanent);
         }
 
-        // set BootSource and BootMode properties
-        // according to oneTimeEnable or persistent
-        auto bootObjPath = oneTimePath;
-        if (oneTimeEnabled == false)
-        {
-            bootObjPath = persistentObjPath;
-        }
         std::string bootMode =
             "xyz.openbmc_project.Control.Boot.Mode.Modes.Regular";
         std::string bootSource = httpBootMode;
