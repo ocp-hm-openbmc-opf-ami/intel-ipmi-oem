@@ -331,7 +331,7 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     }
 
     iter = m.find(ami::ipmi::sel::strEventDir);
-    uint8_t assert;
+    uint8_t assert = 0;
     if (iter != m.end())
     {
         auto eventDir = static_cast<uint8_t>(convert(iter->second));
@@ -758,8 +758,8 @@ void recalculateHashes()
             }
             auto configBus = properties.find("Bus");
             auto configAddr = properties.find("Address");
-            uint8_t confBus;
-            uint8_t confAddr;
+            uint8_t confBus = 0;
+            uint8_t confAddr = 0;
 
             if (configBus == properties.end() || configAddr == properties.end())
             {
@@ -872,6 +872,28 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
         cacheAddr = 0xFF;
         return ipmi::ccResponseError;
     }
+
+#if CONFIGURABLE_FRU == 1
+
+    if (fruCache.empty() || (fruCache.size() <= 8))
+    {
+        // when fruCache is empty assume eemprom is empty and append with max
+        // fru file size 256
+
+        uint8_t configSize = 0xff;
+        for (auto& i : fruMap)
+        {
+            if (i.first == devId)
+            {
+                configSize = i.second;
+            }
+            fruCache.clear();
+            std::vector<uint8_t> emptyFru(configSize, 0xff);
+            std::copy(emptyFru.begin(), emptyFru.end(),
+                      std::back_inserter(fruCache));
+        }
+    }
+#endif
 
     lastDevId = devId;
     return ipmi::ccSuccess;
