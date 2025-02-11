@@ -284,6 +284,23 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
     if (recordType != systemEventRecord)
     {
+	record.event.oemCD.recordID = recordId;
+        record.event.oemCD.recordType = oemRedfishEventRecordTypeCD;
+        record.event.oemCD.timeStamp = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
+            .count());
+        record.event.oemCD.manufacturerID[0] = 'A';
+        record.event.oemCD.manufacturerID[1] = 'M';
+        record.event.oemCD.manufacturerID[2] = 'I';
+        record.event.oemCD.manufacturerID[3] = '\0';
+        record.event.oemCD.oemDefined[0] = 'r';
+        record.event.oemCD.oemDefined[1] = 'e';
+        record.event.oemCD.oemDefined[2] = 'd';
+        record.event.oemCD.oemDefined[3] = 'f';
+        record.event.oemCD.oemDefined[4] = 'i';
+        record.event.oemCD.oemDefined[5] = 's';
+        record.event.oemCD.oemDefined[6] = '\0';
+
         log<level::ERR>("Invalid recordType");
         return record;
     }

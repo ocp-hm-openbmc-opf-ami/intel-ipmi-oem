@@ -39,6 +39,7 @@ static constexpr uint8_t eventMsgRev = 0x04;
 namespace ami::ipmi::sel
 {
 constexpr auto systemEventRecord = 0x02;
+constexpr auto oemRedfishEventRecordTypeCD = 0xDC;
 constexpr auto generatorID = 0x2000;
 constexpr auto eventMsgRevision = 0x04;
 constexpr auto assertEvent = 0x00;
