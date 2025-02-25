@@ -3687,12 +3687,6 @@ ipmi::RspType<> ipmiOemSetEfiBootOptions(uint8_t bootFlag, uint8_t bootParam,
     using namespace boot_options;
     auto oneTimeEnabled = false;
 
-    if (bootFlag == 0 && bootParam == 0)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Unsupported parameter");
-        return ipmi::response(ccParameterNotSupported);
-    }
     if (bootFlag == static_cast<uint8_t>(BootOptionParameter::setInProgress))
     {
         if (bootOption)
@@ -3700,17 +3694,17 @@ ipmi::RspType<> ipmiOemSetEfiBootOptions(uint8_t bootFlag, uint8_t bootParam,
             return ipmi::responseReqDataLenInvalid();
         }
 
-        if (transferStatus == setInProgress)
+        if (bootParam == setComplete)
         {
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "boot option set in progress!");
-            return ipmi::responseResponseError();
+            transferStatus = setComplete;
+        }
+        else
+        {
+            transferStatus = bootParam;
         }
 
-        transferStatus = bootParam;
         return ipmi::responseSuccess();
     }
-
     if (bootFlag != (uint8_t)BootOptionParameter::bootFlags)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
