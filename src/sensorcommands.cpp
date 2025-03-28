@@ -97,12 +97,23 @@ SensorSubTree sensorTree;
 
 static boost::container::flat_map<std::string, ManagedObjectType> SensorCache;
 
-constexpr static std::array<std::pair<const char*, SensorUnits>, 5> sensorUnits{
+constexpr static std::array<std::pair<const char*, SensorUnits>, 16> sensorUnits{
     {{"temperature", SensorUnits::degreesC},
      {"voltage", SensorUnits::volts},
      {"current", SensorUnits::amps},
      {"fan_tach", SensorUnits::rpm},
-     {"power", SensorUnits::watts}}};
+     {"power", SensorUnits::watts},
+     {"pump_tach", SensorUnits::rpm},
+     {"tach", SensorUnits::rpm},
+     {"pressurekpa", SensorUnits::kpa},
+     {"airflow", SensorUnits::cfm},
+     {"fan_pwm", SensorUnits::unspecified},
+     {"pump_pwm", SensorUnits::unspecified},
+     {"pwm", SensorUnits::unspecified},
+     {"humidity", SensorUnits::unspecified},
+     {"utilization", SensorUnits::unspecified},
+     {"hours", SensorUnits::hour},
+     {"flowrate", SensorUnits::liters}}};
 
 void registerSensorFunctions() __attribute__((constructor));
 
@@ -418,6 +429,8 @@ bool constructDiscreteSdr(ipmi::Context::ptr ctx, uint16_t sensorNum,
     record.key.owner_lun = lun;
     record.key.sensor_number = sensorNumber;
     record.body.sensor_type = getSensorTypeFromPath(path);
+    record.body.sensor_initialization = 0x23; // init events
+    record.body.sensor_capabilities = 0x40;   // auto rearm
 
     record.body.event_reading_type = getSensorEventTypeFromPath(path);
     SensorMap sensorMap;
@@ -437,9 +450,23 @@ bool constructDiscreteSdr(ipmi::Context::ptr ctx, uint16_t sensorNum,
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, sensorMap, entityId, entityInstance);
-
+   
     record.body.entity_id = entityId;
     record.body.entity_instance = entityInstance;
+
+    // Follow the sensor 'Associations' property to get any possible 
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type. 
+    // For discrete sensors only, get possible overrides for 
+    // supported_assertions, supported_deassertions, and discrete_reading_setting_mask 
+    updateExtraIpmiFromAssociation(path, sensorMap, 
+        record.body.sensor_capabilities, record.body.sensor_initialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        record.body.supported_assertions[0], record.body.supported_assertions[1],
+        record.body.supported_deassertions[0], record.body.supported_deassertions[1],
+        record.body.discrete_reading_setting_mask[0], 
+        record.body.discrete_reading_setting_mask[1]);
+        
     std::string name;
     size_t nameStart = path.rfind("/");
     if (nameStart != std::string::npos)
@@ -1802,6 +1829,20 @@ static int
             if (type == unitsType)
             {
                 record.body.sensor_units_2_base = static_cast<uint8_t>(units);
+
+                // Special case for flowrate
+                if (type == "flowrate")
+                {
+                    record.body.sensor_units_1 = 0x22; // Rate = per minute, base/modifier
+                    record.body.sensor_units_3_modifier = static_cast<uint8_t>(SensorUnits::min); // minute
+                }
+                // Special case for pwm
+                if (type == "fan_pwm" || type == "pump_pwm" || type == "pwm" || 
+                    type == "utilization" || type == "humidity")
+                {
+                    record.body.sensor_units_1 = 0x1; // Percentage = Yes
+                    record.body.sensor_units_2_base = static_cast<uint8_t>(SensorUnits::unspecified);
+                }
             }
         }
 
@@ -1825,6 +1866,19 @@ static int
         record.body.entity_id = entityId;
         record.body.entity_instance = entityInstance;
 
+        // Follow the sensor 'Associations' property to get any possible 
+        // overrides for sensor_capabilities, sensor_initialization,
+        // sensor_type, and event_reading_type. 
+        // For threshold sensors, supported_assertions, supported_deassertions, 
+        // and discrete_reading_setting_mask are ignored by this function (not updated).
+        updateExtraIpmiFromAssociation(path, sensorMap, 
+            record.body.sensor_capabilities, record.body.sensor_initialization,
+            record.body.sensor_type, record.body.event_reading_type,
+            record.body.supported_assertions[0], record.body.supported_assertions[1],
+            record.body.supported_deassertions[0], record.body.supported_deassertions[1],
+            record.body.discrete_reading_setting_mask[0], 
+            record.body.discrete_reading_setting_mask[1]);
+        
         auto maxObject = sensorObject->second.find("MaxValue");
         auto minObject = sensorObject->second.find("MinValue");
 
@@ -1902,7 +1956,7 @@ static int
             (rExpSign << 7) | (rExpBits << 4) | (bExpSign << 3) | bExpBits;
 
         // Set the analog reading byte interpretation accordingly
-        record.body.sensor_units_1 = (bSigned ? 1 : 0) << 7;
+        record.body.sensor_units_1 |= (bSigned ? 1 : 0) << 7;
 
         // TODO(): Perhaps care about Tolerance, Accuracy, and so on
         // These seem redundant, but derivable from the above 5 attributes
