@@ -217,8 +217,10 @@ class IPMIStatsTable
     }
 };
 
-// This object is global singleton, used from a variety of places
+// These objects are global singletons, used from a variety of places
 inline IPMIStatsTable sdrStatsTable;
+inline boost::container::flat_map<std::string, std::pair<uint8_t, uint8_t>> sensorPathToSensorTypeCache;
+
 inline static void filterSensors(SensorSubTree& subtree)
 {
     subtree.erase(
@@ -490,14 +492,23 @@ inline static std::string getSensorTypeStringFromPath(const std::string& path)
 inline static uint8_t getSensorTypeFromPath(const std::string& path)
 {
     uint8_t sensorType = 0;
-    std::string type = getSensorTypeStringFromPath(path);
-    auto findSensor = sensorTypes.find(type.c_str());
-    if (findSensor != sensorTypes.end())
-    {
-       sensorType =
-            static_cast<uint8_t>(std::get<SensorTypeCodes>(findSensor->second));
-    } // else default 0x0 RESERVED
 
+    // First try to get override value from cache
+    auto findCachedSensor = details::sensorPathToSensorTypeCache.find(path);
+    if (findCachedSensor != details::sensorPathToSensorTypeCache.end())
+    {
+        sensorType = std::get<0>(findCachedSensor->second);
+    }
+    else // Otherwise, get value from hardcoded table sensorTypes
+    {
+        std::string type = getSensorTypeStringFromPath(path);
+        auto findSensor = sensorTypes.find(type.c_str());
+        if (findSensor != sensorTypes.end())
+        {
+           sensorType =
+                static_cast<uint8_t>(std::get<SensorTypeCodes>(findSensor->second));
+        } // else default 0x0 RESERVED
+    }
     return sensorType;
 }
 
@@ -524,17 +535,27 @@ inline static uint16_t getSensorNumberFromPath(const std::string& path)
 inline static uint8_t getSensorEventTypeFromPath(const std::string& path)
 {
     uint8_t sensorEventType = 0;
-    std::string type = getSensorTypeStringFromPath(path);
-    auto findSensor = sensorTypes.find(type.c_str());
-    if (findSensor != sensorTypes.end())
+
+    // First try to get override value from cache
+    auto findCachedSensor = details::sensorPathToSensorTypeCache.find(path);
+    if (findCachedSensor != details::sensorPathToSensorTypeCache.end())
     {
-        sensorEventType = static_cast<uint8_t>(
-            std::get<SensorEventTypeCodes>(findSensor->second));
+        sensorEventType = std::get<1>(findCachedSensor->second);
     }
-    else
+    else // Otherwise, get value from hardcoded table sensorTypes
     {
+        std::string type = getSensorTypeStringFromPath(path);
+        auto findSensor = sensorTypes.find(type.c_str());
+        if (findSensor != sensorTypes.end())
+        {
+            sensorEventType = static_cast<uint8_t>(
+                 std::get<SensorEventTypeCodes>(findSensor->second));
+        }
+        else
+        {
             //Support for additional reading types setting default to threshold
             sensorEventType = 0x1; // reading type = threshold
+        }
     }
     return sensorEventType;
 }
@@ -928,7 +949,7 @@ static inline void updateExtraIpmiFromAssociation(
             assertionMask2 = deassertionMask2 = discreteReadingMask2 = mask[1];
         }
 
-        // Do we have an SensorCapabilities property?
+        // Do we have a SensorCapabilities property?
         auto sensorCapabilitiesProp = configurationProperties.find("SensorCapabilities");
         if (sensorCapabilitiesProp != configurationProperties.end())
         {   
@@ -937,7 +958,7 @@ static inline void updateExtraIpmiFromAssociation(
                 static_cast<uint8_t>(std::get<uint64_t>(sensorCapabilitiesProp->second));
         }
 
-        // Do we have an SensorInitialization property?
+        // Do we have a SensorInitialization property?
         auto sensorInitializationProp = configurationProperties.find("SensorInitialization");
         if (sensorInitializationProp != configurationProperties.end())
         {   
@@ -965,6 +986,12 @@ static inline void updateExtraIpmiFromAssociation(
         }
         break; // stop searching Association records.
     } // for (const auto& entry : associationValues)
+
+    // Save path, sensorTypeCode, and eventReadingType for quick reference later 
+    // Specifically for when we create ipmi sel events this is needed to get the
+    // override values for SensorType and EventReadingType.
+    details::sensorPathToSensorTypeCache[path] = 
+		std::make_pair(sensorTypeCode, eventReadingType);
 
     if constexpr (debug)
     {
