@@ -133,21 +133,12 @@ enum class GetFRUAreaAccessType : uint8_t
 
 enum class SensorUnits : uint8_t
 {
-    unspecified = 0,
-    degreesC = 1,
-    volts = 4,
-    amps = 5,
-    watts = 6,
-    joules = 7,
-    kpa = 14,
-    psi = 15,
-    cfm = 17,
-    rpm = 18,
-    hz = 19,
-    min = 23,
-    hour = 24,
-    day = 25,
-    liters = 37
+    unspecified = 0x0,
+    degreesC = 0x1,
+    volts = 0x4,
+    amps = 0x5,
+    watts = 0x6,
+    rpm = 0x12,
 };
 
 #pragma pack(push, 1)
