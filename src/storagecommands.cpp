@@ -1133,6 +1133,23 @@ ipmi::RspType<uint8_t> ipmiStorageWriteFruData(
     return ipmi::responseSuccess(countWritten);
 }
 
+uint16_t getFruMaxSize(uint8_t fruDeviceId)
+{
+    // Check if the baseboard FRU file exists
+    std::ifstream file(baseboardFruLocation);
+    bool fileExists = file.good();
+    file.close();
+
+    if (fruDeviceId == 0 && fileExists)
+    {
+        return binFruSize;
+    }
+    else
+    {
+        return fruSize;
+    }
+}
+
 /** @brief implements the get FRU inventory area info command
  *  @param fruDeviceId  - FRU Device ID
  *
@@ -1157,6 +1174,14 @@ ipmi::RspType<uint16_t, // inventorySize
 
     constexpr uint8_t accessType =
         static_cast<uint8_t>(GetFRUAreaAccessType::byte);
+
+    const uint16_t maxSize = getFruMaxSize(fruDeviceId);
+    const uint16_t autualSize = fruCache.size();
+
+    if (autualSize < maxSize)
+    {
+        fruCache.insert(fruCache.end(), maxSize - autualSize, 0x00);
+    }
 
     return ipmi::responseSuccess(fruCache.size(), accessType);
 }

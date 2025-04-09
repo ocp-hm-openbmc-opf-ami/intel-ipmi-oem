@@ -19,8 +19,15 @@
 
 #include <cstdint>
 
+
 static constexpr uint8_t ipmiSdrVersion = 0x51;
 static constexpr uint8_t eventDataSize = 3;
+const static constexpr char* baseboardFruLocation = "/etc/fru/baseboard.fru.bin";
+
+/*Some platforms have different sizes of EEPROM and bin, 
+which should change based on the platform.*/
+constexpr size_t fruSize = 255; 
+constexpr size_t binFruSize = 512; 
 
 namespace intel_oem::ipmi::sel
 {
