@@ -1661,8 +1661,10 @@ static int
     }
     if (recordID > lastRecord)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: recordID > lastRecord error");
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
+        /*phosphor::logging::log<phosphor::logging::level::ERR>(
+            "getSensorDataRecord: recordID > lastRecord error"); */
         return GENERAL_ERROR;
     }
 

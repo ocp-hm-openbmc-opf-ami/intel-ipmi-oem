@@ -23,8 +23,10 @@ inline bool getDbusSysLockProperty()
         ipmi::Value v = ipmi::getDbusProperty(*dbus, service, systemLockObj,
                                               systemLockIntf, "SystemLocked");
         sysLock = std::get<bool>(v);
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Get syslock property");
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
+        /*phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Get syslock property"); */
     }
     catch (const std::exception&)
     {
