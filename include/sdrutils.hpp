@@ -592,9 +592,11 @@ static inline std::map<std::string, std::vector<std::string>>
     }
     catch (const std::exception& e)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
+        /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "Failed to GetObject", phosphor::logging::entry("PATH=%s", path),
-            phosphor::logging::entry("WHAT=%s", e.what()));
+            phosphor::logging::entry("WHAT=%s", e.what())); */
     }
 
     return interfacesResponse;
@@ -618,10 +620,12 @@ static inline std::map<std::string, DbusVariant>
     }
     catch (const std::exception& e)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
+        /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "Failed to GetAll", phosphor::logging::entry("PATH=%s", path),
             phosphor::logging::entry("INTF=%s", interface),
-            phosphor::logging::entry("WHAT=%s", e.what()));
+            phosphor::logging::entry("WHAT=%s", e.what())); */
     }
 
     return properties;
