@@ -23,6 +23,8 @@
 #include "types.hpp"
 #include "xyz/openbmc_project/Logging/Entry/server.hpp"
 
+#include <config.h>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/process.hpp>
@@ -36,7 +38,7 @@
 #include <sdbusplus/timer.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Logging/SEL/error.hpp>
-#include <config.h>
+
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -81,8 +83,8 @@ template <typename TP>
 std::time_t to_time_t(TP tp)
 {
     using namespace std::chrono;
-    auto sctp = time_point_cast<system_clock::duration>(tp - TP::clock::now() +
-                                                        system_clock::now());
+    auto sctp = time_point_cast<system_clock::duration>(
+        tp - TP::clock::now() + system_clock::now());
     return system_clock::to_time_t(sctp);
 }
 
@@ -218,9 +220,8 @@ std::vector<uint8_t> convertVec(const std::string_view& str)
     return ret;
 }
 
-std::chrono::milliseconds getEntryData(const std::string& objPath,
-                                       entryDataMap& entryData,
-                                       uint16_t& recordId)
+std::chrono::milliseconds getEntryData(
+    const std::string& objPath, entryDataMap& entryData, uint16_t& recordId)
 {
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
     auto service = ipmi::getService(bus, ipmi::sel::logEntryIntf, objPath);
@@ -284,11 +285,11 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
     if (recordType != systemEventRecord)
     {
-	record.event.oemCD.recordID = recordId;
+        record.event.oemCD.recordID = recordId;
         record.event.oemCD.recordType = oemRedfishEventRecordTypeCD;
         record.event.oemCD.timeStamp = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
-            .count());
+            std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
+                .count());
         record.event.oemCD.manufacturerID[0] = 'A';
         record.event.oemCD.manufacturerID[1] = 'M';
         record.event.oemCD.manufacturerID[2] = 'I';
@@ -392,8 +393,8 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     return record;
 }
 
-std::optional<std::pair<uint16_t, SELEntry>>
-    parseLoggingEntry(const std::string& p)
+std::optional<std::pair<uint16_t, SELEntry>> parseLoggingEntry(
+    const std::string& p)
 {
     try
     {
@@ -479,9 +480,9 @@ void selPolicyCallback(sdbusplus::message::message& msg)
 {
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
     std::string path = msg.get_path();
-    auto methodCall = bus.new_method_call(msg.get_sender(), msg.get_path(),
-                                          "org.freedesktop.DBus.Properties",
-                                          "GetAll");
+    auto methodCall =
+        bus.new_method_call(msg.get_sender(), msg.get_path(),
+                            "org.freedesktop.DBus.Properties", "GetAll");
     methodCall.append("xyz.openbmc_project.Logging.Settings");
     boost::container::flat_map<std::string, std::variant<std::string, bool>>
         selStatus;
@@ -570,7 +571,6 @@ void initSELCache()
     }
     selCacheMapInitialized = true;
 }
-
 
 namespace intel_oem::ipmi::sel
 {
@@ -699,10 +699,10 @@ void recalculateHashes()
 #if CONFIGURABLE_FRU == 1
     using GetSubTreePathsType = std::vector<std::string>;
     auto bus = getSdBus();
-    auto message = bus->new_method_call("xyz.openbmc_project.ObjectMapper",
-                                        "/xyz/openbmc_project/object_mapper",
-                                        "xyz.openbmc_project.ObjectMapper",
-                                        "GetSubTreePaths");
+    auto message = bus->new_method_call(
+        "xyz.openbmc_project.ObjectMapper",
+        "/xyz/openbmc_project/object_mapper",
+        "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths");
     message.append("/", 0,
                    std::array<const char*, 1>{
                        "xyz.openbmc_project.Inventory.Item.FruConfig"});
@@ -962,30 +962,31 @@ void startMatch(void)
             lastDevId = 0xFF;
         });
 
-    fruMatches.emplace_back(*bus,
-                            "type='signal',arg0path='/xyz/openbmc_project/"
-                            "FruDevice/',member='InterfacesRemoved'",
-                            [](sdbusplus::message_t& message) {
-        sdbusplus::message::object_path path;
-        std::set<std::string> interfaces;
-        try
-        {
-            message.read(path, interfaces);
-        }
-        catch (const sdbusplus::exception_t&)
-        {
-            return;
-        }
-        auto findType = interfaces.find("xyz.openbmc_project.FruDevice");
-        if (findType == interfaces.end())
-        {
-            return;
-        }
-        writeFruIfRunning();
-        frus.erase(path);
-        recalculateHashes();
-        lastDevId = 0xFF;
-    });
+    fruMatches.emplace_back(
+        *bus,
+        "type='signal',arg0path='/xyz/openbmc_project/"
+        "FruDevice/',member='InterfacesRemoved'",
+        [](sdbusplus::message_t& message) {
+            sdbusplus::message::object_path path;
+            std::set<std::string> interfaces;
+            try
+            {
+                message.read(path, interfaces);
+            }
+            catch (const sdbusplus::exception_t&)
+            {
+                return;
+            }
+            auto findType = interfaces.find("xyz.openbmc_project.FruDevice");
+            if (findType == interfaces.end())
+            {
+                return;
+            }
+            writeFruIfRunning();
+            frus.erase(path);
+            recalculateHashes();
+            lastDevId = 0xFF;
+        });
 #if CONFIGURABLE_FRU == 1
 
     fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
@@ -1003,7 +1004,6 @@ void startMatch(void)
 
                                 recalculateHashes();
                                 initFruConfig();
-
                             });
 #endif
 
@@ -1266,8 +1266,8 @@ ipmi::Cc getFruSdrs(ipmi::Context::ptr& ctx, size_t index,
                 return false;
             }
 
-            // Integer fields added via Entity-Manager json are uint64_ts by
-            // default.
+            // Integer fields added via Entity-Manager json are
+            // uint64_ts by default.
             auto findBus = findFruDevice->second.find("Bus");
             auto findAddress = findFruDevice->second.find("Address");
 
@@ -1282,8 +1282,8 @@ ipmi::Cc getFruSdrs(ipmi::Context::ptr& ctx, size_t index,
                 return false;
             }
 
-            // At this point we found the device entry and should return
-            // true.
+            // At this point we found the device entry and should
+            // return true.
             auto findIpmiDevice = entry.second.find(
                 "xyz.openbmc_project.Inventory.Decorator.Ipmi");
             if (findIpmiDevice != entry.second.end())
@@ -1449,9 +1449,9 @@ static bool findSELEntry(const int recordID,
     return false;
 }
 
-[[maybe_unused]] static uint16_t
-    getNextRecordID(const uint16_t recordID,
-                    const std::vector<std::filesystem::path>& selLogFiles)
+[[maybe_unused]] static uint16_t getNextRecordID(
+    const uint16_t recordID,
+    const std::vector<std::filesystem::path>& selLogFiles)
 {
     uint16_t nextRecordID = recordID + 1;
     std::string entry;
@@ -1465,7 +1465,8 @@ static bool findSELEntry(const int recordID,
     }
 }
 
-[[maybe_unused]] static int fromHexStr(const std::string& hexStr, std::vector<uint8_t>& data)
+[[maybe_unused]] static int fromHexStr(const std::string& hexStr,
+                                       std::vector<uint8_t>& data)
 {
     for (unsigned int i = 0; i < hexStr.size(); i += 2)
     {
@@ -1566,8 +1567,8 @@ ipmi::RspType<uint16_t,             // Next Record ID
 
     if (!selCacheMapInitialized)
     {
-	    initSELCache();
-	    selCacheMapInitialized = true;
+        initSELCache();
+        selCacheMapInitialized = true;
     }
 
     if (selCacheMap.empty())
@@ -1623,26 +1624,27 @@ ipmi::RspType<uint16_t,             // Next Record ID
     uint8_t timeStampByte2 = (record.event.eventRecord.timeStamp >> 16) & 0xFF;
     uint8_t timeStampByte3 = (record.event.eventRecord.timeStamp >> 8) & 0xFF;
     uint8_t timeStampByte4 = record.event.eventRecord.timeStamp & 0xFF;
-    uint8_t generatorIDByte1 = (record.event.eventRecord.generatorID >> 8) &
-                               0xFF;
+    uint8_t generatorIDByte1 =
+        (record.event.eventRecord.generatorID >> 8) & 0xFF;
     uint8_t generatorIDByte2 = record.event.eventRecord.generatorID & 0xFF;
 
-    std::vector<uint8_t> result = {recordIDByte2,
-                                   recordIDByte1,
-                                   record.event.eventRecord.recordType,
-                                   timeStampByte4,
-                                   timeStampByte3,
-                                   timeStampByte2,
-                                   timeStampByte1,
-                                   generatorIDByte2,
-                                   generatorIDByte1,
-                                   record.event.eventRecord.eventMsgRevision,
-                                   record.event.eventRecord.sensorType,
-                                   record.event.eventRecord.sensorNum,
-                                   record.event.eventRecord.eventType,
-                                   record.event.eventRecord.eventData1,
-                                   record.event.eventRecord.eventData2,
-                                   record.event.eventRecord.eventData3};
+    std::vector<uint8_t> result = {
+        recordIDByte2,
+        recordIDByte1,
+        record.event.eventRecord.recordType,
+        timeStampByte4,
+        timeStampByte3,
+        timeStampByte2,
+        timeStampByte1,
+        generatorIDByte2,
+        generatorIDByte1,
+        record.event.eventRecord.eventMsgRevision,
+        record.event.eventRecord.sensorType,
+        record.event.eventRecord.sensorNum,
+        record.event.eventRecord.eventType,
+        record.event.eventRecord.eventData1,
+        record.event.eventRecord.eventData2,
+        record.event.eventRecord.eventData3};
 
     std::vector<uint8_t> response(EntireRecordData);
     if ((offset == OffsetStartByte) && (readLength == EntireReadLength))
@@ -1671,6 +1673,10 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
     std::array<uint8_t, eventDataSize> eventData)
 
 {
+    if (!selCacheMapInitialized)
+    {
+        initSELCache();
+    }
     static constexpr auto systemRecordType = 0x02;
     cancelSELReservation();
     auto selDataStr = ipmi::sel::toHexStr(eventData);
@@ -1697,7 +1703,9 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         {
             log<level::ERR>("Failed to get sensor object path");
         }
-        bool assert = (eventDir & 0x80) ? false : true;  // assert reprensenting eventDirection.
+        bool assert = (eventDir & 0x80)
+                          ? false
+                          : true; // assert reprensenting eventDirection.
         uint8_t eventType = (eventDir & 0x7F); // 7F representing EventType.
         std::string severity;
         if (!assert)
@@ -1902,7 +1910,7 @@ ipmi::RspType<uint16_t // deleted record ID
     try
     {
         auto reply = bus.call(methodCall);
-    }	
+    }
     catch (const std::exception& e)
     {
         return ipmi::responseUnspecifiedError();
@@ -2082,7 +2090,6 @@ void registerStorageFunctions()
     ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
                           ipmi::storage::cmdGetSelTime, ipmi::Privilege::User,
                           ipmiStorageGetSELTime);
-
 }
 } // namespace storage
 } // namespace ipmi
