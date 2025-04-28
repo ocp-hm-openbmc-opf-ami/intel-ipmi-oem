@@ -111,24 +111,24 @@ static sdbusplus::bus::match_t sensorAdded(
     "type='signal',member='InterfacesAdded',arg0path='/xyz/openbmc_project/"
     "sensors/'",
     [](sdbusplus::message_t&) {
-    sensorTree.clear();
-    sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
-                     std::chrono::system_clock::now().time_since_epoch())
-                     .count();
-    sdrLastUpdate = sdrLastAdd;
-});
+        sensorTree.clear();
+        sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+        sdrLastUpdate = sdrLastAdd;
+    });
 
 static sdbusplus::bus::match_t sensorRemoved(
     *getSdBus(),
     "type='signal',member='InterfacesRemoved',arg0path='/xyz/openbmc_project/"
     "sensors/'",
     [](sdbusplus::message_t&) {
-    sensorTree.clear();
-    sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch())
-                        .count();
-    sdrLastUpdate = sdrLastRemove;
-});
+        sensorTree.clear();
+        sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+        sdrLastUpdate = sdrLastRemove;
+    });
 
 // this keeps track of deassertions for sensor event status command. A
 // deasertion can only happen if an assertion was seen first.
@@ -186,7 +186,8 @@ static constexpr const char* sensorInterface =
 static constexpr const char* discreteInterface =
     "xyz.openbmc_project.Sensor.State";
 
-bool getDiscreteStatus(const SensorMap& sensorMap,[[maybe_unused]]  const std::string path,
+bool getDiscreteStatus(const SensorMap& sensorMap,
+                       [[maybe_unused]] const std::string path,
                        uint16_t& assertions)
 {
     auto statusObject = sensorMap.find("xyz.openbmc_project.Sensor.State");
@@ -498,8 +499,8 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
                       | (0x0 << 8)         // 0x0 for sys-soft ID
                       | sysgeneratorID;
 
-     assert = eventType & directionMask ? false : true;
-     sensorPath = getPathFromSensorNumber(sensorNum, sensorType);
+        assert = eventType & directionMask ? false : true;
+        sensorPath = getPathFromSensorNumber(sensorNum, sensorType);
     }
     else
     {
@@ -511,8 +512,8 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
                       | ((ctx->lun & 0x3) << 8) // Lun
                       | (ctx->rqSA << 1);
 
-     assert = eventType & directionMask ? false : true;
-     sensorPath = getPathFromSensorNumber(sensorNum, sensorType);
+        assert = eventType & directionMask ? false : true;
+        sensorPath = getPathFromSensorNumber(sensorNum, sensorType);
     }
 
     if (!p.fullyUnpacked())
@@ -529,7 +530,7 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     {
         return ipmi::responseInvalidFieldRequest();
     }
-    //adding event message to SEL
+    // adding event message to SEL
     std::vector<uint8_t> eventData{eventData1, eventData2.value_or(0xFF),
                                    eventData3.value_or(0xFF)};
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
@@ -578,34 +579,30 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
  *  @returns the sensor type value and Event/Reading type code
  */
 
-ipmi::RspType< uint8_t,     //sensor type
-              uint8_t >    //event/reading type code
-              ipmiGetSensorTypeCmd(uint8_t SensorNum)
+ipmi::RspType<uint8_t, // sensor type
+              uint8_t> // event/reading type code
+    ipmiGetSensorTypeCmd(uint8_t SensorNum)
 {
-     std::string sensorPath;
-     uint8_t sensorType;
-     uint8_t eventType;
+    std::string sensorPath;
+    uint8_t sensorType;
+    uint8_t eventType;
 
-     try
-     {
-         sensorPath = getPathFromSensorNumber(SensorNum);
-         if (sensorPath.empty())
-         {
-             return ipmi::response(ccSensorInvalid);
-         }
-         sensorType = getSensorTypeFromPath(sensorPath);
-         eventType = getSensorEventTypeFromPath(sensorPath);
-
-     }
-     catch(std::exception&)
-     {
+    try
+    {
+        sensorPath = getPathFromSensorNumber(SensorNum);
+        if (sensorPath.empty())
+        {
+            return ipmi::response(ccSensorInvalid);
+        }
+        sensorType = getSensorTypeFromPath(sensorPath);
+        eventType = getSensorEventTypeFromPath(sensorPath);
+    }
+    catch (std::exception&)
+    {
         return ipmi::responseResponseError();
-     }
+    }
 
-
-
-  return ipmi::responseSuccess(sensorType,eventType);
-
+    return ipmi::responseSuccess(sensorType, eventType);
 }
 
 ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
@@ -787,22 +784,24 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
         sensorMap.find("xyz.openbmc_project.Sensor.Threshold.NonRecoverable");
     if (nonRecoverableObject != sensorMap.end())
     {
-        auto alarmHigh = nonRecoverableObject->second.find("NonRecoverableAlarmHigh");
-        auto alarmLow = nonRecoverableObject->second.find("NonRecoverableAlarmLow");
+        auto alarmHigh =
+            nonRecoverableObject->second.find("NonRecoverableAlarmHigh");
+        auto alarmLow =
+            nonRecoverableObject->second.find("NonRecoverableAlarmLow");
         if (alarmHigh != nonRecoverableObject->second.end())
         {
             if (std::get<bool>(alarmHigh->second))
             {
-                thresholds |=
-                    static_cast<uint8_t>(IPMISensorReadingByte3::upperNonRecoverable);
+                thresholds |= static_cast<uint8_t>(
+                    IPMISensorReadingByte3::upperNonRecoverable);
             }
         }
         if (alarmLow != nonRecoverableObject->second.end())
         {
             if (std::get<bool>(alarmLow->second))
             {
-                thresholds |=
-                    static_cast<uint8_t>(IPMISensorReadingByte3::lowerNonRecoverable);
+                thresholds |= static_cast<uint8_t>(
+                    IPMISensorReadingByte3::lowerNonRecoverable);
             }
         }
     }
@@ -991,8 +990,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     }
     if (lowerNonRecovThreshMask || upperNonRecovThreshMask)
     {
-        auto findThreshold =
-            sensorMap.find("xyz.openbmc_project.Sensor.Threshold.NonRecoverable");
+        auto findThreshold = sensorMap.find(
+            "xyz.openbmc_project.Sensor.Threshold.NonRecoverable");
         if (findThreshold == sensorMap.end())
         {
             return ipmi::responseInvalidFieldRequest();
@@ -1014,8 +1013,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
                 return ipmi::responseInvalidFieldRequest();
             }
 
-            thresholdsToSet.emplace_back("NonRecoverableLow", lowerNonRecoverable,
-                                         findThreshold->first);
+            thresholdsToSet.emplace_back(
+                "NonRecoverableLow", lowerNonRecoverable, findThreshold->first);
         }
         if (upperNonRecovThreshMask)
         {
@@ -1033,9 +1032,10 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
                     "Invaild Upper Non Recoverable Threshold Value Setting");
                 return ipmi::responseInvalidFieldRequest();
             }
-            thresholdsToSet.emplace_back("NonRecoverableHigh", upperNonRecoverable,
+            thresholdsToSet.emplace_back("NonRecoverableHigh",
+                                         upperNonRecoverable,
                                          findThreshold->first);
-         }
+        }
     }
     for (const auto& property : thresholdsToSet)
     {
@@ -1068,7 +1068,7 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap)
 
     if ((warningInterface != sensorMap.end()) ||
         (criticalInterface != sensorMap.end()) ||
-	(nonRecoverableInterface != sensorMap.end()))
+        (nonRecoverableInterface != sensorMap.end()))
     {
         auto sensorPair = sensorMap.find("xyz.openbmc_project.Sensor.Value");
 
@@ -1153,13 +1153,15 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap)
         {
             auto& nonRecoverableMap = nonRecoverableInterface->second;
 
-            auto nonRecoverableHigh = nonRecoverableMap.find("NonRecoverableHigh");
-            auto nonRecoverableLow = nonRecoverableMap.find("NonRecoverableLow");
+            auto nonRecoverableHigh =
+                nonRecoverableMap.find("NonRecoverableHigh");
+            auto nonRecoverableLow =
+                nonRecoverableMap.find("NonRecoverableLow");
 
             if (nonRecoverableHigh != nonRecoverableMap.end())
             {
-                double value =
-                    std::visit(VariantToDoubleVisitor(), nonRecoverableHigh->second);
+                double value = std::visit(VariantToDoubleVisitor(),
+                                          nonRecoverableHigh->second);
                 if (std::isfinite(value))
                 {
                     resp.nonRecoverableHigh = scaleIPMIValueFromDouble(
@@ -1168,8 +1170,8 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap)
             }
             if (nonRecoverableLow != nonRecoverableMap.end())
             {
-                double value =
-                    std::visit(VariantToDoubleVisitor(), nonRecoverableLow->second);
+                double value = std::visit(VariantToDoubleVisitor(),
+                                          nonRecoverableLow->second);
                 if (std::isfinite(value))
                 {
                     resp.nonRecoverableLow = scaleIPMIValueFromDouble(
@@ -1255,14 +1257,14 @@ ipmi::RspType<uint8_t, // readable
     }
     if (thresholdData.nonRecoverableHigh)
     {
-        readable |=
-            1 << static_cast<uint8_t>(IPMIThresholdRespBits::upperNonRecoverable);
+        readable |= 1 << static_cast<uint8_t>(
+                        IPMIThresholdRespBits::upperNonRecoverable);
         upperNonRecoverable = *thresholdData.nonRecoverableHigh;
     }
     if (thresholdData.nonRecoverableLow)
     {
-        readable |=
-            1 << static_cast<uint8_t>(IPMIThresholdRespBits::lowerNonRecoverable);
+        readable |= 1 << static_cast<uint8_t>(
+                        IPMIThresholdRespBits::lowerNonRecoverable);
         lowerNonRecoverable = *thresholdData.nonRecoverableLow;
     }
 
@@ -1323,7 +1325,7 @@ ipmi::RspType<uint8_t, // enabled
         sensorMap.find("xyz.openbmc_project.Sensor.Threshold.NonRecoverable");
     if ((warningInterface != sensorMap.end()) ||
         (criticalInterface != sensorMap.end()) ||
-	(nonRecoverableInterface != sensorMap.end()))
+        (nonRecoverableInterface != sensorMap.end()))
     {
         enabled = static_cast<uint8_t>(
             IPMISensorEventEnableByte2::sensorScanningEnable);
@@ -1400,12 +1402,13 @@ ipmi::RspType<uint8_t, // enabled
         {
             auto& nonRecoverableMap = nonRecoverableInterface->second;
 
-            auto nonRecoverabHigh = nonRecoverableMap.find("NonRecoverableHigh");
+            auto nonRecoverabHigh =
+                nonRecoverableMap.find("NonRecoverableHigh");
             auto nonRecoverabLow = nonRecoverableMap.find("NonRecoverableLow");
             if (nonRecoverabHigh != nonRecoverableMap.end())
             {
-                double value =
-                    std::visit(VariantToDoubleVisitor(), nonRecoverabHigh->second);
+                double value = std::visit(VariantToDoubleVisitor(),
+                                          nonRecoverabHigh->second);
                 if (std::isfinite(value))
                 {
                     assertionEnabledLsb |= static_cast<uint8_t>(
@@ -1418,8 +1421,8 @@ ipmi::RspType<uint8_t, // enabled
             }
             if (nonRecoverabLow != nonRecoverableMap.end())
             {
-                double value =
-                    std::visit(VariantToDoubleVisitor(), nonRecoverabLow->second);
+                double value = std::visit(VariantToDoubleVisitor(),
+                                          nonRecoverabLow->second);
                 if (std::isfinite(value))
                 {
                     assertionEnabledLsb |= static_cast<uint8_t>(
@@ -1534,7 +1537,7 @@ ipmi::RspType<uint8_t,         // sensorEventStatus
     }
     if ((warningInterface != sensorMap.end()) ||
         (criticalInterface != sensorMap.end()) ||
-	(nonRecoverableInterface != sensorMap.end()))
+        (nonRecoverableInterface != sensorMap.end()))
     {
         sensorEventStatus = static_cast<size_t>(
             IPMISensorEventEnableByte2::eventMessagesEnable);
@@ -1601,18 +1604,22 @@ ipmi::RspType<uint8_t,         // sensorEventStatus
         {
             auto& nonRecoverableMap = nonRecoverableInterface->second;
 
-            auto nonRecoverableHigh = nonRecoverableMap.find("NonRecoverableAlarmHigh");
-            auto nonRecoverableLow = nonRecoverableMap.find("NonRecoverableAlarmLow");
+            auto nonRecoverableHigh =
+                nonRecoverableMap.find("NonRecoverableAlarmHigh");
+            auto nonRecoverableLow =
+                nonRecoverableMap.find("NonRecoverableAlarmLow");
             auto nonRecoverableHighAlarm = false;
             auto nonRecoverableLowAlarm = false;
 
             if (nonRecoverableHigh != nonRecoverableMap.end())
             {
-                nonRecoverableHighAlarm = std::get<bool>(nonRecoverableHigh->second);
+                nonRecoverableHighAlarm =
+                    std::get<bool>(nonRecoverableHigh->second);
             }
             if (nonRecoverableLow != nonRecoverableMap.end())
             {
-                nonRecoverableLowAlarm = std::get<bool>(nonRecoverableLow->second);
+                nonRecoverableLowAlarm =
+                    std::get<bool>(nonRecoverableLow->second);
             }
             if (nonRecoverableHighAlarm)
             {
@@ -1623,7 +1630,8 @@ ipmi::RspType<uint8_t,         // sensorEventStatus
             if (nonRecoverableLowAlarm)
             {
                 assertions.set(static_cast<size_t>(
-                    IPMIGetSensorEventEnableThresholds::lowerNonRecoverableGoingLow));
+                    IPMIGetSensorEventEnableThresholds::
+                        lowerNonRecoverableGoingLow));
             }
         }
     }
@@ -1637,10 +1645,9 @@ static inline uint16_t getNumberOfSensors(void)
                                               : sensorTree.size();
 }
 
-static int
-    getSensorDataRecord(ipmi::Context::ptr ctx,
-                        std::vector<uint8_t>& recordData, uint16_t recordID,
-                        [[maybe_unused]] uint8_t readBytes = std::numeric_limits<uint8_t>::max())
+static int getSensorDataRecord(
+    ipmi::Context::ptr ctx, std::vector<uint8_t>& recordData, uint16_t recordID,
+    [[maybe_unused]] uint8_t readBytes = std::numeric_limits<uint8_t>::max())
 {
     size_t fruCount = 0;
     ipmi::Cc ret = ipmi::storage::getFruSdrCount(ctx, fruCount);
@@ -1651,9 +1658,9 @@ static int
         return GENERAL_ERROR;
     }
 
-    size_t lastRecord = getNumberOfSensors() + fruCount +
-                        ipmi::storage::type12Count +
-                        ipmi::storage::nmDiscoverySDRCount - 1;
+    size_t lastRecord =
+        getNumberOfSensors() + fruCount + ipmi::storage::type12Count +
+        ipmi::storage::nmDiscoverySDRCount - 1;
     recordData.clear();
     if (recordID == lastRecordIndex)
     {
@@ -1661,8 +1668,8 @@ static int
     }
     if (recordID > lastRecord)
     {
-	// Disabling this log to reduce unnecessary error messages in the journal.
-	// Enable if Debugging is Required 
+        // Disabling this log to reduce unnecessary error messages in the
+        // journal. Enable if Debugging is Required
         /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "getSensorDataRecord: recordID > lastRecord error"); */
         return GENERAL_ERROR;
@@ -2155,8 +2162,8 @@ ipmi::RspType<uint8_t, // Action Supported
 
     PropertyMap pefCfgValues;
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
-    auto method = dbus->new_method_call(pefBus, pefObj, PROP_INTF,
-                                        METHOD_GET_ALL);
+    auto method =
+        dbus->new_method_call(pefBus, pefObj, PROP_INTF, METHOD_GET_ALL);
     method.append(pefConfInfoIntf);
     auto reply = dbus->call(method);
     if (reply.is_method_error())
@@ -2252,31 +2259,24 @@ ipmi::RspType<uint8_t> // Present Timer Countdown Value
     countdownTmrValue = static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
 
     // Checking Conditions as per the ipmi Specification
-    if ((pefPostponeTimer == pefDisable) ||
-        ((pefPostponeTimer != tempPefDisable) &&
-         (pefPostponeTimer = !presentCwnValue)))
+    if (pefPostponeTimer == pefDisable)
     {
         lg2::info("Postpone Timer is Disabled");
     }
-
-    if ((pefPostponeTimer != tempPefDisable) &&
-        (pefPostponeTimer != pefDisable) &&
-        (pefPostponeTimer = !presentCwnValue))
+    else if ((pefPostponeTimer != tempPefDisable) &&
+             (pefPostponeTimer != pefDisable) &&
+             (pefPostponeTimer != presentCwnValue))
     {
         lg2::info(
             "PEF Task is Disabled by Postpone Timer and Starting Countdown Timer Value ");
+        return ipmi::responseSuccess(pefPostponeTimer);
     }
-
-    if ((pefPostponeTimer == tempPefDisable) ||
-        ((pefPostponeTimer != pefDisable) &&
-         (pefPostponeTimer = !presentCwnValue)))
+    else if (pefPostponeTimer == tempPefDisable)
     {
         lg2::info("PEF Task is Disabled by Postpone Timer");
+        return ipmi::responseSuccess(pefPostponeTimer);
     }
-
-    if ((pefPostponeTimer == presentCwnValue) ||
-        ((pefPostponeTimer != pefDisable) &&
-         (pefPostponeTimer = !tempPefDisable)))
+    else if ((pefPostponeTimer == presentCwnValue))
     {
         lg2::info("Get the Current Countdown Value");
     }
@@ -2347,9 +2347,9 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                Value variant = ipmi::getDbusProperty(*dbus, pefBus, pefObj,
-                                                      pefConfInfoIntf,
-                                                      "PEFActionGblControl");
+                Value variant = ipmi::getDbusProperty(
+                    *dbus, pefBus, pefObj, pefConfInfoIntf,
+                    "PEFActionGblControl");
                 paraData = std::get<uint8_t>(variant);
                 paraDataByte.push_back(paraData);
             }
@@ -2393,9 +2393,9 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                Value variant = ipmi::getDbusProperty(*dbus, pefBus, pefObj,
-                                                      pefConfInfoIntf,
-                                                      "PEFAlertStartupDly");
+                Value variant = ipmi::getDbusProperty(
+                    *dbus, pefBus, pefObj, pefConfInfoIntf,
+                    "PEFAlertStartupDly");
                 paraData = std::get<uint8_t>(variant);
                 paraDataByte.push_back(paraData);
             }
@@ -2430,8 +2430,8 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             }
             uint8_t offsetMask1 = 0, offsetMask2 = 0;
             uint16_t eveData1OffsetMask;
-            std::string pefEveObjEntry = eventFilterTableObj +
-                                         std::to_string(setSel);
+            std::string pefEveObjEntry =
+                eventFilterTableObj + std::to_string(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2500,8 +2500,8 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 return ipmi::responseParmOutOfRange();
             }
-            std::string pefEveObjEntry = eventFilterTableObj +
-                                         std::to_string(setSel);
+            std::string pefEveObjEntry =
+                eventFilterTableObj + std::to_string(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2540,8 +2540,8 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 return ipmi::responseParmOutOfRange();
             }
-            std::string pefAlertObjEntry = alertPolicyTableObj +
-                                           std::to_string(setSel);
+            std::string pefAlertObjEntry =
+                alertPolicyTableObj + std::to_string(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2566,7 +2566,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
         }
 
         default:
-           return response(ipmiCCParamNotSupported);
+            return response(ipmiCCParamNotSupported);
     }
     return ipmi::responseSuccess(paraVer, paraDataByte);
 }
@@ -2738,8 +2738,8 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            std::string pefEveObjEntry = eventFilterTableObj +
-                                         std::to_string(entryData.at(0));
+            std::string pefEveObjEntry =
+                eventFilterTableObj + std::to_string(entryData.at(0));
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2838,8 +2838,8 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                 return ipmi::responseInvalidFieldRequest();
             }
 
-            std::string pefEveObjEntry = eventFilterTableObj +
-                                         std::to_string(entryData.at(0));
+            std::string pefEveObjEntry =
+                eventFilterTableObj + std::to_string(entryData.at(0));
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2879,8 +2879,8 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                 return ipmi::responseParmOutOfRange();
             }
 
-            std::string pefAlertObjEntry = alertPolicyTableObj +
-                                           std::to_string(entryData.at(0));
+            std::string pefAlertObjEntry =
+                alertPolicyTableObj + std::to_string(entryData.at(0));
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
@@ -2943,13 +2943,13 @@ ipmi::RspType<uint8_t,  // sdr version
         return ipmi::response(ret);
     }
 
-    uint16_t recordCount = getNumberOfSensors() + fruCount +
-                           ipmi::storage::type12Count;
+    uint16_t recordCount =
+        getNumberOfSensors() + fruCount + ipmi::storage::type12Count;
 
     uint8_t operationSupport = static_cast<uint8_t>(
         SdrRepositoryInfoOps::overflow); // write not supported
 
-       while (!getSensorDataRecord(ctx, record, recordID++))
+    while (!getSensorDataRecord(ctx, record, recordID++))
     {
         get_sdr::SensorDataRecordHeader* hdr =
             reinterpret_cast<get_sdr::SensorDataRecordHeader*>(record.data());
@@ -2983,19 +2983,19 @@ ipmi::RspType<uint8_t,  // sdr version
     }
 
     uint16_t freeSpace =
-        maxFreeSpace - ((fullSdrCount * type1RecordSize) +
-                        (compactSdrCount * type2RecordSize) +
-                        (type11SdrCount * fruRecordSize) +
-                        (ipmi::storage::type12Count * fruRecordSize) +
-            (fruCount * fruRecordSize));
+        maxFreeSpace -
+        ((fullSdrCount * type1RecordSize) +
+         (compactSdrCount * type2RecordSize) +
+         (type11SdrCount * fruRecordSize) +
+         (ipmi::storage::type12Count * fruRecordSize) +
+         (fruCount * fruRecordSize));
 
     operationSupport |=
         static_cast<uint8_t>(SdrRepositoryInfoOps::allocCommandSupported);
     operationSupport |= static_cast<uint8_t>(
         SdrRepositoryInfoOps::reserveSDRRepositoryCommandSupported);
-    return ipmi::responseSuccess(ipmiSdrVersion, recordCount,
-                                 freeSpace, sdrLastAdd,
-                                 sdrLastRemove, operationSupport);
+    return ipmi::responseSuccess(ipmiSdrVersion, recordCount, freeSpace,
+                                 sdrLastAdd, sdrLastRemove, operationSupport);
 }
 
 /** @brief implements the get SDR allocation info command
@@ -3147,7 +3147,7 @@ void registerSensorFunctions()
 
     // <Get Sensor Type>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
-                         ipmi::sensor_event::cmdGetSensorType,
+                          ipmi::sensor_event::cmdGetSensorType,
                           ipmi::Privilege::User, ipmiGetSensorTypeCmd);
 
     // <Get Sensor Reading>
@@ -3208,7 +3208,8 @@ void registerSensorFunctions()
     // <Get Device SDR Info>
     ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdGetDeviceSdrInfo,
-                          ipmi::Privilege::sysIface, ipmiSensorGetDeviceSdrInfo);
+                          ipmi::Privilege::sysIface,
+                          ipmiSensorGetDeviceSdrInfo);
 
     // <Get SDR Allocation Info>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnStorage,
