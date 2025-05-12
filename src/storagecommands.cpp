@@ -694,6 +694,7 @@ void createTimers()
 void recalculateHashes()
 {
     deviceHashes.clear();
+    fruMap.clear();
     // hash the object paths to create unique device id's. increment on
     // collision
 #if CONFIGURABLE_FRU == 1
@@ -805,6 +806,12 @@ void recalculateHashes()
                 {
                     auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
                     fruHash = static_cast<uint8_t>(*fruIdValue);
+
+                    auto fruSizeIter = properties.find("FruSize");
+                    auto fruSizeValue =
+                        std::get_if<uint8_t>(&fruSizeIter->second);
+                    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+                    fruMap.push_back(std::make_pair(fruHash, fruSize));
                     break;
                 }
             }

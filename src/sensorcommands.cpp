@@ -3161,7 +3161,6 @@ ipmi::RspType<uint8_t,  // sdr version
                            ipmi::sensor::getOtherSensorsCount(ctx);
     uint8_t operationSupport = static_cast<uint8_t>(
         SdrRepositoryInfoOps::overflow); // write not supported
-
     operationSupport |=
         static_cast<uint8_t>(SdrRepositoryInfoOps::allocCommandSupported);
     operationSupport |= static_cast<uint8_t>(
