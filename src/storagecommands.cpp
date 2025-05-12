@@ -694,6 +694,7 @@ void createTimers()
 void recalculateHashes()
 {
     deviceHashes.clear();
+    fruMap.clear();
     // hash the object paths to create unique device id's. increment on
     // collision
 #if CONFIGURABLE_FRU == 1
@@ -805,6 +806,12 @@ void recalculateHashes()
                 {
                     auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
                     fruHash = static_cast<uint8_t>(*fruIdValue);
+
+                    auto fruSizeIter = properties.find("FruSize");
+                    auto fruSizeValue =
+                        std::get_if<uint8_t>(&fruSizeIter->second);
+                    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+                    fruMap.push_back(std::make_pair(fruHash, fruSize));
                     break;
                 }
             }
@@ -987,25 +994,6 @@ void startMatch(void)
             recalculateHashes();
             lastDevId = 0xFF;
         });
-#if CONFIGURABLE_FRU == 1
-
-    fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
-                            [](sdbusplus::message::message& message) {
-                                sdbusplus::message::object_path path;
-                                ObjectType object;
-                                try
-                                {
-                                    message.read(path, object);
-                                }
-                                catch (const sdbusplus::exception_t&)
-                                {
-                                    return;
-                                }
-
-                                recalculateHashes();
-                                initFruConfig();
-                            });
-#endif
 
     // call once to populate
     boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
