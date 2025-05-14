@@ -268,6 +268,8 @@ static constexpr Cmd cmdGetBmcServicePortValue = 0xE4;
 static constexpr Cmd cmdOEMClearSessionInfo = 0xd5;
 static constexpr Cmd cmdGetBiosPostCode = 0xD1;
 constexpr auto cmdGetBiosPostCodeToIpmiMaxSize = 945;
+static constexpr Cmd cmdOEMGetTimezone = 0x9E;
+static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 
 namespace network
 {
