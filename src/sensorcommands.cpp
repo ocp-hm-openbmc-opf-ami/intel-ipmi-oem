@@ -2152,7 +2152,7 @@ static ipmi::RspType<uint8_t, // respcount
 }
 ipmi::RspType<uint8_t, // Action Supported
               uint8_t,
-              uint8_t // No of Event Filtering Table Entries
+              uint8_t  // No of Event Filtering Table Entries
               >
     ipmiSenGetPefCapabilities()
 {
@@ -2770,8 +2770,8 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                 ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
                                       eventFilterTableIntf, "EventTrigger",
                                       entryData.at(9));
-                tmpOffsetMask = entryData.at(11);
-                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(10) & 0xff));
+                tmpOffsetMask = entryData.at(10);
+                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(11) & 0xff));
                 ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
                                       eventFilterTableIntf,
                                       "EventData1OffsetMask", offsetMask);
