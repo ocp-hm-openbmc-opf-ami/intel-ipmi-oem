@@ -7296,6 +7296,67 @@ ipmi::RspType<> ipmiOEMSetTimezone([[maybe_unused]] ipmi::Context::ptr ctx,
     return ipmi::responseSuccess();
 }
 
+ipmi::RspType<uint8_t> ipmiOEMSetExtlogConfigs(
+    bool EnableLog, uint7_t reserved, uint8_t LogLevel, uint8_t ReqResLogLevel)
+{
+    if (reserved != 0 || LogLevel > 1 || ReqResLogLevel > 2)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    try
+    {
+        auto service =
+            ipmi::getService(*dbus, extlogconfigIntf, extlogconfigObjPath);
+        ipmi::setDbusProperty(*dbus, service, extlogconfigObjPath,
+                              extlogconfigIntf, "EnableExtlog", EnableLog);
+        ipmi::setDbusProperty(*dbus, service, extlogconfigObjPath,
+                              extlogconfigIntf, "LogLevel", LogLevel);
+        ipmi::setDbusProperty(*dbus, service, extlogconfigObjPath,
+                              extlogconfigIntf, "ReqResLogLevel",
+                              ReqResLogLevel);
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to set Extlog config",
+            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess();
+}
+
+ipmi::RspType<bool, uint7_t, uint8_t, uint8_t> ipmiOEMGetExtlogConfigs()
+{
+    bool ExtlogStatus = false;
+    uint8_t LogLevel = 0;
+    uint8_t ReqResLogLevel = 0;
+
+    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    try
+    {
+        auto service =
+            ipmi::getService(*dbus, extlogconfigIntf, extlogconfigObjPath);
+
+        ipmi::PropertyMap result = ipmi::getAllDbusProperties(
+            *dbus, service, extlogconfigObjPath, extlogconfigIntf);
+        ExtlogStatus = std::get<bool>(result.at("EnableExtlog"));
+        LogLevel = std::get<uint8_t>(result.at("LogLevel"));
+        ReqResLogLevel = std::get<uint8_t>(result.at("ReqResLogLevel"));
+    }
+    catch (const std::exception& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get Extlog config",
+            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess(ExtlogStatus, 0, LogLevel, ReqResLogLevel);
+}
+
 static void registerOEMFunctions(void)
 {
     phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -7671,6 +7732,16 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMClearSessionInfo, Privilege::Admin,
                     ipmiOEMClearSessionInfo);
+
+    // <Set Extlog Configurations>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetExtlogConfigs, Privilege::Admin,
+                    ipmiOEMSetExtlogConfigs);
+
+    // <Get Extlog Configurations>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetExtlogConfigs, Privilege::User,
+                    ipmiOEMGetExtlogConfigs);
 }
 
 } // namespace ipmi
