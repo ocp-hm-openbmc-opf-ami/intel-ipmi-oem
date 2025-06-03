@@ -1250,7 +1250,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-
             thresholdsToSet.emplace_back(
                 "NonRecoverableLow", lowerNonRecoverable, findThreshold->first);
         }
@@ -1261,7 +1260,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            thresholdsToSet.emplace_back("NonRecoverableHigh", upperNonRecoverable,
+            thresholdsToSet.emplace_back("NonRecoverableHigh",
+                                         upperNonRecoverable,
                                          findThreshold->first);
         }
     }
@@ -1763,22 +1763,6 @@ ipmi::RspType<uint8_t,         // sensorEventStatus
     std::bitset<16> assertions = 0;
     std::bitset<16> deassertions = 0;
 
-    /* // handle VR typed sensor
-     auto vrInterface = sensorMap.find(sensor::vrInterface);
-     if (vrInterface != sensorMap.end())
-     {
-         if (!sensor::getVrEventStatus(ctx, connection, path,
-                                       vrInterface->second, assertions))
-         {
-             return ipmi::responseResponseError();
-         }
-
-         // both Event Message and Sensor Scanning are disable for VR.
-         sensorEventStatus = 0;
-         return ipmi::responseSuccess(sensorEventStatus, assertions,
-                                      deassertions);
-     }*/
-
     auto warningInterface =
         sensorMap.find("xyz.openbmc_project.Sensor.Threshold.Warning");
     auto criticalInterface =
@@ -2056,8 +2040,8 @@ bool constructSensorSdr(
     uint8_t bExpBits = bExp & 0x07;
 
     // move rExp and bExp into place
-    record.body.r_b_exponents = (rExpSign << 7) | (rExpBits << 4) |
-                                (bExpSign << 3) | bExpBits;
+    record.body.r_b_exponents =
+        (rExpSign << 7) | (rExpBits << 4) | (bExpSign << 3) | bExpBits;
 
     // Set the analog reading byte interpretation accordingly
     record.body.sensor_units_1 = (bSigned ? 1 : 0) << 7;
@@ -2277,7 +2261,6 @@ static int getSensorDataRecord(
         {
             return GENERAL_ERROR;
         }
-
         recordData.insert(recordData.end(), reinterpret_cast<uint8_t*>(&record),
                           reinterpret_cast<uint8_t*>(&record) + sizeof(record));
         return nextRecord;
@@ -2296,7 +2279,6 @@ static int getSensorDataRecord(
         recordData.insert(recordData.end(), (uint8_t*)&record,
                           ((uint8_t*)&record) + sizeof(record));
     }
-
     return nextRecord;
 }
 
@@ -3157,10 +3139,12 @@ ipmi::RspType<uint8_t,  // sdr version
     ipmiStorageGetSDRRepositoryInfo(ipmi::Context::ptr ctx)
 {
     constexpr const uint16_t unspecifiedFreeSpace = 0xFFFF;
-    uint16_t recordCount = ipmi::getNumberOfSensors() +
-                           ipmi::sensor::getOtherSensorsCount(ctx);
+    uint16_t recordCount =
+        ipmi::getNumberOfSensors() + ipmi::sensor::getOtherSensorsCount(ctx);
+
     uint8_t operationSupport = static_cast<uint8_t>(
         SdrRepositoryInfoOps::overflow); // write not supported
+
     operationSupport |=
         static_cast<uint8_t>(SdrRepositoryInfoOps::allocCommandSupported);
     operationSupport |= static_cast<uint8_t>(

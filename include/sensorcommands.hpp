@@ -16,14 +16,14 @@
 
 #pragma once
 #include "sdrutils.hpp"
+
 #include <ipmid/api.hpp>
 
 #include <cstdint>
 
 #pragma pack(push, 1)
 
-
-//specific response codes
+// specific response codes
 constexpr uint8_t ipmiCCParamNotSupported = 0x80;
 constexpr uint8_t ipmiCCParamReadOnly = 0x82;
 

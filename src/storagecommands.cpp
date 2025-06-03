@@ -2023,9 +2023,8 @@ ipmi::RspType<uint32_t> ipmiStorageGetSELTime()
     return ipmi::responseSuccess(selTime.tv_sec);
 }
 
-std::vector<uint8_t>
-    getType8SDRs(ipmi::sensor::EntityInfoMap::const_iterator& entity,
-                 uint16_t recordId)
+std::vector<uint8_t> getType8SDRs(
+    ipmi::sensor::EntityInfoMap::const_iterator& entity, uint16_t recordId)
 {
     std::vector<uint8_t> resp;
     get_sdr::SensorDataEntityRecord data{};
