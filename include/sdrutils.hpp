@@ -797,39 +797,6 @@ static inline void updateIpmiFromAssociation(
                      path.c_str(), entityId, entityInstance);
     }
 }
-// Fetch the ipmiDecoratorPaths to get the list of dbus objects that
-// have ipmi decorator to prevent unnessary dbus call to fetch the
-inline std::optional<std::unordered_set<std::string>>&
-    getIpmiDecoratorPaths(const std::optional<ipmi::Context::ptr>& ctx)
-{
-    static std::optional<std::unordered_set<std::string>> ipmiDecoratorPaths;
-
-    if (!ctx.has_value() || ipmiDecoratorPaths != std::nullopt)
-    {
-        return ipmiDecoratorPaths;
-    }
-
-    boost::system::error_code ec;
-    std::vector<std::string> paths =
-        (*ctx)->bus->yield_method_call<std::vector<std::string>>(
-            (*ctx)->yield, ec, "xyz.openbmc_project.ObjectMapper",
-            "/xyz/openbmc_project/object_mapper",
-            "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths", "/",
-            int32_t(0),
-            std::array<const char*, 1>{
-                "xyz.openbmc_project.Inventory.Decorator.Ipmi"});
-    if (ec)
-    {
-        return ipmiDecoratorPaths;
-    }
-
-    ipmiDecoratorPaths = std::unordered_set<std::string>(paths.begin(),
-                                                         paths.end());
-    return ipmiDecoratorPaths;
-}
-
-inline std::optional<std::unordered_set<std::string>>&
-    getIpmiDecoratorPaths(const std::optional<ipmi::Context::ptr>& ctx);
 
 // Fetch the ipmiDecoratorPaths to get the list of dbus objects that
 // have ipmi decorator to prevent unnessary dbus call to fetch
