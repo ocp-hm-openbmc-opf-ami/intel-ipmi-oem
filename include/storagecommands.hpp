@@ -19,15 +19,15 @@
 
 #include <cstdint>
 
-
 static constexpr uint8_t ipmiSdrVersion = 0x51;
 static constexpr uint8_t eventDataSize = 3;
-const static constexpr char* baseboardFruLocation = "/etc/fru/baseboard.fru.bin";
+const static constexpr char* baseboardFruLocation =
+    "/etc/fru/baseboard.fru.bin";
 
-/*Some platforms have different sizes of EEPROM and bin, 
+/*Some platforms have different sizes of EEPROM and bin,
 which should change based on the platform.*/
-constexpr size_t fruSize = 255; 
-constexpr size_t binFruSize = 512; 
+constexpr size_t fruSize = 255;
+constexpr size_t binFruSize = 512;
 
 namespace intel_oem::ipmi::sel
 {
@@ -210,6 +210,8 @@ ipmi::Cc getFruSdrs(ipmi::Context::ptr& ctx, size_t index,
 
 ipmi::Cc getFruSdrCount(ipmi::Context::ptr& ctx, size_t& count);
 
+std::vector<uint8_t> getType8SDRs(
+    ipmi::sensor::EntityInfoMap::const_iterator& entity, uint16_t recordId);
 std::vector<uint8_t> getType12SDRs(uint16_t index, uint16_t recordId);
 std::vector<uint8_t> getNMDiscoverySDR(uint16_t index, uint16_t recordId);
 void initFruConfig();

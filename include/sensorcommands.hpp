@@ -16,14 +16,14 @@
 
 #pragma once
 #include "sdrutils.hpp"
+
 #include <ipmid/api.hpp>
 
 #include <cstdint>
 
 #pragma pack(push, 1)
 
-
-//specific response codes
+// specific response codes
 constexpr uint8_t ipmiCCParamNotSupported = 0x80;
 constexpr uint8_t ipmiCCParamReadOnly = 0x82;
 
@@ -185,46 +185,41 @@ enum class IPMINetfnSensorCmds : ipmi_cmd_t
     ipmiCmdSetSensorReadingAndEventStatus = 0x30,
 };
 
+namespace sensor
+{
+/**
+ * @brief Retrieve the number of sensors that are not included in the list of
+ * sensors published via D-Bus
+ *
+ * @param[in]: ctx: the pointer to the D-Bus context
+ * @return: The number of additional sensors separate from those published
+ * dynamically on D-Bus
+ */
+size_t getOtherSensorsCount(ipmi::Context::ptr ctx);
+
+/**
+ * @brief Retrieve the record data for the sensors not published via D-Bus
+ *
+ * @param[in]: ctx: the pointer to the D-Bus context
+ * @param[in]: recordID: the integer index for the sensor to retrieve
+ * @param[out]: SDR data for the indexed sensor
+ * @return: 0: success
+ *          negative number: error condition
+ */
+int getOtherSensorsDataRecord(ipmi::Context::ptr ctx, uint16_t recordID,
+                              std::vector<uint8_t>& recordData);
+} // namespace sensor
+
 namespace ipmi
 {
-extern SensorSubTree sensorTree;
-static ipmi_ret_t
-    getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
-                        std::string& connection, std::string& path,
-                        std::vector<std::string>* interfaces = nullptr)
-{
-    if (!getSensorSubtree(sensorTree) && sensorTree.empty())
-    {
-        return IPMI_CC_RESPONSE_ERROR;
-    }
 
-    if (ctx == nullptr)
-    {
-        return IPMI_CC_RESPONSE_ERROR;
-    }
+uint16_t getNumberOfSensors();
 
-    path = getPathFromSensorNumber((ctx->lun << 8) | sensnum);
-    if (path.empty())
-    {
-        return IPMI_CC_SENSOR_INVALID;
-    }
+SensorSubTree& getSensorTree();
 
-    for (const auto& sensor : sensorTree)
-    {
-        if (path == sensor.first)
-        {
-            connection = sensor.second.begin()->first;
-            if (interfaces)
-            {
-                *interfaces = sensor.second.begin()->second;
-            }
-
-            break;
-        }
-    }
-
-    return 0;
-}
+ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
+                               std::string& connection, std::string& path,
+                               std::vector<std::string>* interfaces = nullptr);
 
 struct IPMIThresholds
 {
