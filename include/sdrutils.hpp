@@ -30,7 +30,6 @@
 #include <map>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <vector>
 
 #pragma once
@@ -471,7 +470,7 @@ inline static uint8_t getSensorTypeFromPath(const std::string& path)
     auto findSensor = sensorTypes.find(type.c_str());
     if (findSensor != sensorTypes.end())
     {
-        sensorType =
+       sensorType =
             static_cast<uint8_t>(std::get<SensorTypeCodes>(findSensor->second));
     } // else default 0x0 RESERVED
 
@@ -510,8 +509,8 @@ inline static uint8_t getSensorEventTypeFromPath(const std::string& path)
     }
     else
     {
-        // Support for additional reading types setting default to threshold
-        sensorEventType = 0x1; // reading type = threshold
+            //Support for additional reading types setting default to threshold
+            sensorEventType = 0x1; // reading type = threshold
     }
     return sensorEventType;
 }
@@ -588,8 +587,8 @@ static inline std::map<std::string, std::vector<std::string>>
     }
     catch (const std::exception& e)
     {
-        // Disabling this log to reduce unnecessary error messages in the
-        // journal. Enable if Debugging is Required
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
         /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "Failed to GetObject", phosphor::logging::entry("PATH=%s", path),
             phosphor::logging::entry("WHAT=%s", e.what())); */
@@ -598,8 +597,8 @@ static inline std::map<std::string, std::vector<std::string>>
     return interfacesResponse;
 }
 
-static inline std::map<std::string, DbusVariant> getEntityManagerProperties(
-    const char* path, const char* interface)
+static inline std::map<std::string, DbusVariant>
+    getEntityManagerProperties(const char* path, const char* interface)
 {
     std::map<std::string, DbusVariant> properties;
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
@@ -616,8 +615,8 @@ static inline std::map<std::string, DbusVariant> getEntityManagerProperties(
     }
     catch (const std::exception& e)
     {
-        // Disabling this log to reduce unnecessary error messages in the
-        // journal. Enable if Debugging is Required
+	// Disabling this log to reduce unnecessary error messages in the journal.
+	// Enable if Debugging is Required 
         /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "Failed to GetAll", phosphor::logging::entry("PATH=%s", path),
             phosphor::logging::entry("INTF=%s", interface),
@@ -665,9 +664,8 @@ static inline const std::string* getSensorConfigurationInterface(
 // Follow Association properties for Sensor back to the Board dbus object to
 // check for an EntityId and EntityInstance property.
 static inline void updateIpmiFromAssociation(
-    const std::string& path,
-    [[maybe_unused]] const std::unordered_set<std::string>& ipmiDecoratorPaths,
-    const SensorMap& sensorMap, uint8_t& entityId, uint8_t& entityInstance)
+    const std::string& path, const SensorMap& sensorMap, uint8_t& entityId,
+    uint8_t& entityInstance)
 {
     namespace fs = std::filesystem;
 
@@ -793,39 +791,5 @@ static inline void updateIpmiFromAssociation(
                      path.c_str(), entityId, entityInstance);
     }
 }
-
-// Fetch the ipmiDecoratorPaths to get the list of dbus objects that
-// have ipmi decorator to prevent unnessary dbus call to fetch
-inline std::optional<std::unordered_set<std::string>>& getIpmiDecoratorPaths(
-    const std::optional<ipmi::Context::ptr>& ctx)
-{
-    static std::optional<std::unordered_set<std::string>> ipmiDecoratorPaths;
-
-    if (!ctx.has_value() || ipmiDecoratorPaths != std::nullopt)
-    {
-        return ipmiDecoratorPaths;
-    }
-
-    boost::system::error_code ec;
-    std::vector<std::string> paths =
-        (*ctx)->bus->yield_method_call<std::vector<std::string>>(
-            (*ctx)->yield, ec, "xyz.openbmc_project.ObjectMapper",
-            "/xyz/openbmc_project/object_mapper",
-            "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths", "/",
-            int32_t(0),
-            std::array<const char*, 1>{
-                "xyz.openbmc_project.Inventory.Decorator.Ipmi"});
-    if (ec)
-    {
-        return ipmiDecoratorPaths;
-    }
-
-    ipmiDecoratorPaths =
-        std::unordered_set<std::string>(paths.begin(), paths.end());
-    return ipmiDecoratorPaths;
-}
-
-inline std::optional<std::unordered_set<std::string>>& getIpmiDecoratorPaths(
-    const std::optional<ipmi::Context::ptr>& ctx);
 
 } // namespace ipmi
