@@ -4667,7 +4667,7 @@ int dateTimeCheck(std::string dateTime)
         {
             return 1;
         } // else if
-    } // if
+    }     // if
 
     if (std::stoi(dateList.at(1)) == 4 || std::stoi(dateList.at(1)) == 6 ||
         std::stoi(dateList.at(1)) == 9 || std::stoi(dateList.at(1)) == 11)
@@ -4755,6 +4755,7 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
         std::string macAddr;
         std::string startTime;
         std::string endTime;
+        std::string IPver;
     } properties;
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
     switch (static_cast<ami::general::network::SetFirewallOEMParam>(parameter))
@@ -4887,7 +4888,7 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                         {
                             return 1;
                         } // else if
-                    } // for
+                    }     // for
 
                     return 0;
                 } // else if
@@ -5055,7 +5056,8 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
         {
             int16_t retValue;
             uint8_t action;
-            if (req.unpack(action) != 0 || !req.fullyUnpacked())
+            uint8_t IPver;
+            if (req.unpack(action, IPver) != 0 || !req.fullyUnpacked())
             {
                 return responseReqDataLenInvalid();
             } // if
@@ -5088,8 +5090,74 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                     ami::general::network::FirewallFlags::PROTOCOL);
             }
 
+            if (IPver == 0b00)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::IPV4);
+            }
+            else if (IPver == 0b01)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::IPV6);
+            }
+            else if (IPver == 0b10)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::BOTH);
+            }
+            else
+            {
+                properties = {};
+                return ipmi::responseInvalidFieldRequest();
+            }
+
+            if (IPver == 0b00)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::IPV4);
+            }
+            else if (IPver == 0b01)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::IPV6);
+            }
+            else if (IPver == 0b10)
+            {
+                properties.IPver = sdbusplus::xyz::openbmc_project::Network::
+                    server::convertForMessage(FirewallIface::IP::BOTH);
+            }
+            else
+            {
+                properties = {};
+                return ipmi::responseInvalidFieldRequest();
+            }
+
             if (action == 0b01)
             {
+                if ((!properties.startIPAddr.empty() &&
+                     properties.startIPAddr.find(":") == std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV6)) ||
+                    (!properties.endIPAddr.empty() &&
+                     properties.endIPAddr.find(":") == std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV6)) ||
+                    (!properties.startIPAddr.empty() &&
+                     properties.startIPAddr.find(":") != std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV4)) ||
+                    (!properties.endIPAddr.empty() &&
+                     properties.endIPAddr.find(":") != std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV4)))
+                {
+                    return ipmi::responseInvalidFieldRequest();
+                }
+
                 auto method = dbus->new_method_call(
                     ami::general::network::phosphorNetworkService,
                     ami::general::network::firewallConfigurationObj,
@@ -5099,7 +5167,8 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                               properties.protocol, properties.startIPAddr,
                               properties.endIPAddr, properties.startPort,
                               properties.endPort, properties.macAddr,
-                              properties.startTime, properties.endTime);
+                              properties.startTime, properties.endTime,
+                              properties.IPver);
                 try
                 {
                     auto reply = dbus->call(method);
@@ -5122,6 +5191,30 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
             } // if
             else if (action == 0x00)
             {
+                if ((!properties.startIPAddr.empty() &&
+                     properties.startIPAddr.find(":") == std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV6)) ||
+                    (!properties.endIPAddr.empty() &&
+                     properties.endIPAddr.find(":") == std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV6)) ||
+                    (!properties.startIPAddr.empty() &&
+                     properties.startIPAddr.find(":") != std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV4)) ||
+                    (!properties.endIPAddr.empty() &&
+                     properties.endIPAddr.find(":") != std::string::npos &&
+                     properties.IPver ==
+                         sdbusplus::xyz::openbmc_project::Network::server::
+                             convertForMessage(FirewallIface::IP::IPV4)))
+                {
+                    return ipmi::responseInvalidFieldRequest();
+                }
+
                 auto method = dbus->new_method_call(
                     ami::general::network::phosphorNetworkService,
                     ami::general::network::firewallConfigurationObj,
@@ -5131,7 +5224,8 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                               properties.protocol, properties.startIPAddr,
                               properties.endIPAddr, properties.startPort,
                               properties.endPort, properties.macAddr,
-                              properties.startTime, properties.endTime);
+                              properties.startTime, properties.endTime,
+                              properties.IPver);
                 try
                 {
                     auto reply = dbus->call(method);
@@ -5512,7 +5606,7 @@ uint32_t CalculateCRC32(unsigned char* Buffer, uint32_t Size)
     /* Read the data and calculate crc32 */
     for (i = 0; i < Size; i++)
         crc32 = ((crc32) >> 8) ^
-                CrcLookUpTable[(Buffer[i]) ^ ((crc32) & 0x000000FF)];
+                CrcLookUpTable[(Buffer[i]) ^ ((crc32)&0x000000FF)];
     return ~crc32;
 }
 
