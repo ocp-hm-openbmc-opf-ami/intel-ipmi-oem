@@ -293,14 +293,12 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
         record.event.oemCD.manufacturerID[0] = 'A';
         record.event.oemCD.manufacturerID[1] = 'M';
         record.event.oemCD.manufacturerID[2] = 'I';
-        record.event.oemCD.manufacturerID[3] = '\0';
         record.event.oemCD.oemDefined[0] = 'r';
         record.event.oemCD.oemDefined[1] = 'e';
         record.event.oemCD.oemDefined[2] = 'd';
         record.event.oemCD.oemDefined[3] = 'f';
         record.event.oemCD.oemDefined[4] = 'i';
         record.event.oemCD.oemDefined[5] = 's';
-        record.event.oemCD.oemDefined[6] = '\0';
 
         log<level::ERR>("Invalid recordType");
         return record;
@@ -1679,6 +1677,10 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         try
         {
             objpath = getPathFromSensorNumber(sensorNumber, sensorType);
+	    if (objpath.empty()) {
+		    log<level::ERR>("Requested sensor not present");
+		    return ipmi::responseSensorInvalid();
+	    }
             typeFromPath = getSensorTypeFromPath(objpath);
             if (typeFromPath !=
                 sensorType) // if sensorType not matching, we assume sensor not
@@ -2054,11 +2056,12 @@ void initFruConfig()
         {
             auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
             fruId = static_cast<uint8_t>(*fruIdValue);
+	    if (fruSizeIter != properties.end()) {
+		    auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
+		    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
 
-            auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
-            uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
-
-            fruMap.push_back(std::make_pair(fruId, fruSize));
+		    fruMap.push_back(std::make_pair(fruId, fruSize));
+	    }
         }
     }
 }
