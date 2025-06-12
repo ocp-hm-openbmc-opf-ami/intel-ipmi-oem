@@ -48,8 +48,8 @@
 
 static constexpr bool DEBUG = false;
 
-constexpr uint16_t InfoEventEntries = 2639;
-constexpr uint16_t ErrorEventEntries = 1000;
+constexpr uint16_t InfoEventEntries = 900;
+constexpr uint16_t ErrorEventEntries = 350;
 
 constexpr uint8_t EntireReadLength = 0xFF;
 constexpr uint8_t OffsetStartByte = 0x00;
@@ -283,22 +283,6 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     const auto& addData = std::get<ipmi::sel::AdditionalData>(iterData->second);
     m = parseAdditionalData(addData);
     auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
-    if (recordType != systemEventRecord)
-    {
-        record.event.oemCD.recordID = recordId;
-        record.event.oemCD.recordType = oemRedfishEventRecordTypeCD;
-        record.event.oemCD.timeStamp = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
-                .count());
-        record.event.oemCD.manufacturerID[0] = 'A';
-        record.event.oemCD.manufacturerID[1] = 'M';
-        record.event.oemCD.manufacturerID[2] = 'I';
-        record.event.oemCD.oemDefined[0] = 'r';
-        record.event.oemCD.oemDefined[1] = 'e';
-        record.event.oemCD.oemDefined[2] = 'd';
-        record.event.oemCD.oemDefined[3] = 'f';
-        record.event.oemCD.oemDefined[4] = 'i';
-        record.event.oemCD.oemDefined[5] = 's';
 
     if ((recordType >= oemRecordTypeC0 && recordType <= oemRecordTypeDF) ||
         (recordType >= oemRecordTypeE0 && recordType <= oemRecordTypeFE))
@@ -317,11 +301,11 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
             if (recordType >= oemRecordTypeC0 && recordType <= oemRecordTypeDF)
             {
                 constexpr size_t manufacturerIDSize =
-                    sizeof(record.event.oemCD.manufacturerID); 
+                    sizeof(record.event.oemCD.manufacturerID);
                 constexpr size_t oemDefinedSize =
-                    sizeof(record.event.oemCD.oemDefined); 
+                    sizeof(record.event.oemCD.oemDefined);
                 constexpr size_t requiredSize =
-                    manufacturerIDSize + oemDefinedSize; 
+                    manufacturerIDSize + oemDefinedSize;
 
                 if (oemSelData.size() > requiredSize)
                 {
@@ -474,8 +458,8 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     return record;
 }
 
-std::optional<std::pair<uint16_t, SELEntry>> parseLoggingEntry(
-    const std::string& p)
+std::optional<std::pair<uint16_t, SELEntry>>
+    parseLoggingEntry(const std::string& p)
 {
     try
     {
@@ -1555,9 +1539,9 @@ static bool findSELEntry(const int recordID,
     return false;
 }
 
-[[maybe_unused]] static uint16_t getNextRecordID(
-    const uint16_t recordID,
-    const std::vector<std::filesystem::path>& selLogFiles)
+[[maybe_unused]] static uint16_t
+    getNextRecordID(const uint16_t recordID,
+                    const std::vector<std::filesystem::path>& selLogFiles)
 {
     uint16_t nextRecordID = recordID + 1;
     std::string entry;
@@ -1797,10 +1781,11 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         try
         {
             objpath = getPathFromSensorNumber(sensorNumber, sensorType);
-	    if (objpath.empty()) {
-		    log<level::ERR>("Requested sensor not present");
-		    return ipmi::responseSensorInvalid();
-	    }
+            if (objpath.empty())
+            {
+                log<level::ERR>("Requested sensor not present");
+                return ipmi::responseSensorInvalid();
+            }
             typeFromPath = getSensorTypeFromPath(objpath);
             if (typeFromPath !=
                 sensorType) // if sensorType not matching, we assume sensor not
@@ -2178,12 +2163,13 @@ void initFruConfig()
         {
             auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
             fruId = static_cast<uint8_t>(*fruIdValue);
-	    if (fruSizeIter != properties.end()) {
-		    auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
-		    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+            if (fruSizeIter != properties.end())
+            {
+                auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
+                uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
 
-		    fruMap.push_back(std::make_pair(fruId, fruSize));
-	    }
+                fruMap.push_back(std::make_pair(fruId, fruSize));
+            }
         }
     }
 }

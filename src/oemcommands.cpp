@@ -506,8 +506,8 @@ ipmi_ret_t ipmiOEMSetSystemGUID(ipmi_netfn_t, ipmi_cmd_t,
     return IPMI_CC_OK;
 }
 
-ipmi::RspType<> ipmiOEMDisableBMCSystemReset(bool disableResetOnSMI,
-                                             uint7_t reserved1)
+ipmi::RspType<>
+    ipmiOEMDisableBMCSystemReset(bool disableResetOnSMI, uint7_t reserved1)
 {
     if (reserved1)
     {
@@ -3239,8 +3239,8 @@ ipmi::RspType<> ipmiSetSecurityMode(ipmi::Context::ptr& ctx,
     return ipmi::responseSuccess();
 }
 
-ipmi::RspType<uint8_t /* restore status */> ipmiRestoreConfiguration(
-    const std::array<uint8_t, 3>& clr, uint8_t cmd)
+ipmi::RspType<uint8_t /* restore status */>
+    ipmiRestoreConfiguration(const std::array<uint8_t, 3>& clr, uint8_t cmd)
 {
     static constexpr std::array<uint8_t, 3> expClr = {'C', 'L', 'R'};
 
@@ -3838,8 +3838,8 @@ static const constexpr uint8_t psuRevision = 0xd9;
 static const constexpr uint8_t defaultPSUBus = 7;
 // Second Minor, Primary Minor, Major
 static const constexpr size_t verLen = 3;
-ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetPSUVersion(
-    ipmi::Context::ptr& ctx)
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiOEMGetPSUVersion(ipmi::Context::ptr& ctx)
 {
     uint8_t bus = defaultPSUBus;
     std::vector<uint64_t> addrTable;
@@ -3877,8 +3877,8 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetPSUVersion(
     return ipmi::responseSuccess(result);
 }
 
-std::optional<uint8_t> getMultiNodeInfoPresence(ipmi::Context::ptr& ctx,
-                                                const std::string& name)
+std::optional<uint8_t>
+    getMultiNodeInfoPresence(ipmi::Context::ptr& ctx, const std::string& name)
 {
     Value dbusValue = 0;
     std::string serviceName;
@@ -4337,9 +4337,9 @@ std::vector<uint8_t> convertToBytes(std::string data)
     return val;
 }
 
-ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(
-    ipmi::Context::ptr ctx, uint8_t server, uint8_t parameter,
-    message::Payload& req)
+ipmi::RspType<message::Payload>
+    ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
+                         uint8_t parameter, message::Payload& req)
 {
     message::Payload ret;
     std::string smtpIntf{};
@@ -4536,9 +4536,9 @@ ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(
     return ipmi::responseInvalidFieldRequest();
 }
 
-ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadPFRMailbox(
-    ipmi::Context::ptr& ctx, const uint8_t readRegister,
-    const uint8_t numOfBytes, uint8_t registerIdentifier)
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiOEMReadPFRMailbox(ipmi::Context::ptr& ctx, const uint8_t readRegister,
+                          const uint8_t numOfBytes, uint8_t registerIdentifier)
 {
     if (!ipmi::mailbox::i2cConfigLoaded)
     {
@@ -4737,8 +4737,8 @@ int dateTimeCompare(std::string date1, std::string date2)
     return 0;
 }
 
-ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
-    uint8_t parameter, message::Payload& req)
+ipmi::RspType<message::Payload>
+    ipmiOEMSetFirewallConfiguration(uint8_t parameter, message::Payload& req)
 {
     message::Payload ret;
     using FirewallIface =
@@ -5284,8 +5284,8 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
     return ipmi::responseUnspecifiedError();
 }
 
-ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(
-    uint8_t parameter, message::Payload& req)
+ipmi::RspType<message::Payload>
+    ipmiOEMGetFirewallConfiguration(uint8_t parameter, message::Payload& req)
 {
     using FirewallIface =
         sdbusplus::xyz::openbmc_project::Network::server::FirewallConfiguration;
@@ -5347,7 +5347,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(
                     {
                         num++;
                     } // if
-                } // for
+                }     // for
 
                 payload.pack(num);
             }
@@ -5403,7 +5403,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(
                 {
                     i++;
                 } // if
-            } // for
+            }     // for
 
             auto [preload, target, control, protocol, startIPAddr, endIPAddr,
                   startPort, endPort, macAddr, startTime,
@@ -5553,8 +5553,8 @@ ipmi::RspType<> ipmiOEMSetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx,
     return ipmi::responseSuccess();
 }
 
-ipmi::RspType<uint8_t> ipmiOEMGetSELPolicy(
-    [[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<uint8_t>
+    ipmiOEMGetSELPolicy([[maybe_unused]] ipmi::Context::ptr ctx)
 {
     uint8_t policy;
     std::string policyStr;
@@ -5764,8 +5764,8 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     return ipmi::responseSuccess(caSubVec);
 }
 
-ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus(
-    [[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<uint8_t>
+    ipmiOEMGetKCSStatus([[maybe_unused]] ipmi::Context::ptr ctx)
 {
     try
     {
@@ -6634,8 +6634,8 @@ ipmi::RspType<bool, uint7_t> ipmiOEMGetSNMPStatus(ipmi::Context::ptr ctx)
     return ipmi::responseSuccess(status, 0);
 }
 
-ipmi::RspType<std::vector<uint8_t>> ipmiGetManagerCertFingerPrint(
-    uint8_t certNum)
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiGetManagerCertFingerPrint(uint8_t certNum)
 {
     unsigned int n;
     const EVP_MD* fdig = EVP_sha256();
@@ -6951,9 +6951,9 @@ static inline void checkAndThrowError(boost::system::error_code& ec,
 
 // General function to get a property value
 template <typename T>
-static inline T getPropertyValue(const DbusInterfaceMap& intfMap,
-                                 const std::string& intfName,
-                                 const std::string& propName)
+static inline T
+    getPropertyValue(const DbusInterfaceMap& intfMap,
+                     const std::string& intfName, const std::string& propName)
 {
     for (const auto& intf : intfMap)
     {
@@ -7317,8 +7317,8 @@ ipmi::RspType<uint16_t, uint16_t, std::vector<uint8_t>> ipmiGetBiosPostCode()
     return ipmi::response(ipmiCCBIOSPostCodeError);
 }
 
-ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetTimezone(
-    [[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiOEMGetTimezone([[maybe_unused]] ipmi::Context::ptr ctx)
 {
     std::string timezone;
 

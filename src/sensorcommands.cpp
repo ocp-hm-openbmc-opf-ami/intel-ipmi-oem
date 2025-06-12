@@ -830,12 +830,12 @@ ipmi::RspType<uint8_t, // sensor type
         sensorType = getSensorTypeFromPath(sensorPath);
         eventType = getSensorEventTypeFromPath(sensorPath);
     }
-     catch(std::exception&)
-     {
+    catch (std::exception&)
+    {
         return ipmi::responseResponseError();
-     }
+    }
 
-     return ipmi::responseSuccess(sensorType, eventType);
+    return ipmi::responseSuccess(sensorType, eventType);
 }
 
 ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
@@ -2172,8 +2172,8 @@ static int getSensorDataRecord(
     }
     if (recordID > lastRecord)
     {
-	// Disabling this log to reduce unnecessary error messages in the journal.
-	// Enable if Debugging is Required 
+        // Disabling this log to reduce unnecessary error messages in the
+        // journal. Enable if Debugging is Required
         /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "getSensorDataRecord: recordID > lastRecord error"); */
         return GENERAL_ERROR;
@@ -2214,9 +2214,9 @@ static int getSensorDataRecord(
         ctx->lun = 3;
     }
 
-    auto status = getSensorConnection(ctx,
-                                      static_cast<uint8_t>(sensNumFromRecID),
-                                      connection, path, &interfaces);
+    auto status =
+        getSensorConnection(ctx, static_cast<uint8_t>(sensNumFromRecID),
+                            connection, path, &interfaces);
 
     if (status)
     {
@@ -2369,7 +2369,7 @@ static ipmi::RspType<uint8_t, // respcount
 }
 ipmi::RspType<uint8_t, // Action Supported
               uint8_t,
-              uint8_t  // No of Event Filtering Table Entries
+              uint8_t // No of Event Filtering Table Entries
               >
     ipmiSenGetPefCapabilities()
 {
@@ -3241,8 +3241,8 @@ ipmi::RspType<uint16_t,            // next record ID
         return ipmi::responseSuccess(nextRecordId, record);
     }
 
-    size_t sdrLength = sizeof(get_sdr::SensorDataRecordHeader) +
-                       hdr->record_length;
+    size_t sdrLength =
+        sizeof(get_sdr::SensorDataRecordHeader) + hdr->record_length;
 
     if (offset >= sdrLength)
     {
