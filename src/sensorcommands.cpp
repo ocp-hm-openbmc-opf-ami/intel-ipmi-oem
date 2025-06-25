@@ -3229,7 +3229,7 @@ ipmi::RspType<uint16_t,            // next record ID
     if (nextRecordId < 0)
     {
         lg2::error("ipmiStorageGetSDR: fail to get SDR");
-        return ipmi::responseInvalidFieldRequest();
+        return ipmi::responseSensorInvalid();
     }
 
     get_sdr::SensorDataRecordHeader* hdr =
