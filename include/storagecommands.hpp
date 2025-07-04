@@ -46,7 +46,10 @@ static constexpr uint8_t eventMsgRev = 0x04;
 namespace ami::ipmi::sel
 {
 constexpr auto systemEventRecord = 0x02;
-constexpr auto oemRedfishEventRecordTypeCD = 0xDC;
+constexpr auto oemRecordTypeC0 = 0xC0;
+constexpr auto oemRecordTypeDF = 0xDF;
+constexpr auto oemRecordTypeE0 = 0xE0;
+constexpr auto oemRecordTypeFE = 0xFE;
 constexpr auto generatorID = 0x2000;
 constexpr auto eventMsgRevision = 0x04;
 constexpr auto assertEvent = 0x00;
@@ -81,10 +84,12 @@ struct SELPolicyinfo
 
 static constexpr auto logObjPath = "/xyz/openbmc_project/logging";
 static constexpr auto logInterface = "xyz.openbmc_project.Logging.Create";
-constexpr auto logWatchPath = "/xyz/openbmc_project/logging";
-constexpr auto logBasePath = "/xyz/openbmc_project/logging/entry";
+constexpr auto logWatchPath = "/xyz/openbmc_project/logging/ipmi";
+constexpr auto logBasePath = "/xyz/openbmc_project/logging/ipmi";
 constexpr auto logEntryIntf = "xyz.openbmc_project.Logging.Entry";
 constexpr auto logDeleteIntf = "xyz.openbmc_project.Object.Delete";
+constexpr auto logDeleteLogTypeMethod = "DeleteLogType";
+constexpr auto logIntf = "xyz.openbmc_project.Collection.DeleteLogType";
 constexpr const char* informationalLevel =
     "xyz.openbmc_project.Logging.Entry.Level.Informational";
 constexpr const char* warningLevel =

@@ -265,9 +265,13 @@ static constexpr Cmd cmdSetBmcServiceStatus = 0xE1;
 static constexpr Cmd cmdGetBmcServiceStatus = 0xE2;
 static constexpr Cmd cmdSetBmcServicePortValue = 0xE3;
 static constexpr Cmd cmdGetBmcServicePortValue = 0xE4;
+static constexpr Cmd cmdOEMSetExtlogConfigs = 0xE5;
+static constexpr Cmd cmdOEMGetExtlogConfigs = 0xE6;
 static constexpr Cmd cmdOEMClearSessionInfo = 0xd5;
 static constexpr Cmd cmdGetBiosPostCode = 0xD1;
 constexpr auto cmdGetBiosPostCodeToIpmiMaxSize = 945;
+static constexpr Cmd cmdOEMGetTimezone = 0x9E;
+static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 
 namespace network
 {
@@ -438,6 +442,11 @@ static constexpr const char* serviceMgrKvmObjPath =
     "/xyz/openbmc_project/control/service/start_2dipkvm";
 static constexpr const char* serviceConfigInterface =
     "xyz.openbmc_project.Control.Service.Attributes";
+
+static constexpr const char* extlogconfigIntf =
+    "xyz.openbmc_project.Extlog.ExtlogConfigs";
+static constexpr const char* extlogconfigObjPath =
+    "/xyz/openbmc_project/Extlog/ExtlogConfigs";
 
 // session timeout in seconds
 static constexpr const uint64_t minSessionTimeOut = 30;

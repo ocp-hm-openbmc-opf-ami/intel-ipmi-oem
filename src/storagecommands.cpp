@@ -48,8 +48,8 @@
 
 static constexpr bool DEBUG = false;
 
-constexpr uint16_t InfoEventEntries = 2639;
-constexpr uint16_t ErrorEventEntries = 1000;
+constexpr uint16_t InfoEventEntries = 900;
+constexpr uint16_t ErrorEventEntries = 350;
 
 constexpr uint8_t EntireReadLength = 0xFF;
 constexpr uint8_t OffsetStartByte = 0x00;
@@ -110,7 +110,7 @@ inline uint16_t getLoggingId(const std::string& p)
 
 std::string getLoggingObjPath(uint16_t id)
 {
-    return std::string(ipmi::sel::logBasePath) + "/" + std::to_string(id);
+    return std::string(logBasePath) + "/" + std::to_string(id);
 }
 
 std::chrono::seconds getEntryTimeStamp(const std::string& objPath)
@@ -151,7 +151,7 @@ void readLoggingObjectPathst(ipmi::sel::ObjectPaths& paths)
     auto mapperCall =
         bus.new_method_call(ipmi::sel::mapperBusName, ipmi::sel::mapperObjPath,
                             ipmi::sel::mapperIntf, "GetSubTreePaths");
-    mapperCall.append(ipmi::sel::logBasePath);
+    mapperCall.append(logBasePath);
     mapperCall.append(depth);
     mapperCall.append(ipmi::sel::ObjectPaths({ipmi::sel::logEntryIntf}));
 
@@ -283,26 +283,93 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     const auto& addData = std::get<ipmi::sel::AdditionalData>(iterData->second);
     m = parseAdditionalData(addData);
     auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
-    if (recordType != systemEventRecord)
-    {
-        record.event.oemCD.recordID = recordId;
-        record.event.oemCD.recordType = oemRedfishEventRecordTypeCD;
-        record.event.oemCD.timeStamp = static_cast<uint32_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(chronoTimeStamp)
-                .count());
-        record.event.oemCD.manufacturerID[0] = 'A';
-        record.event.oemCD.manufacturerID[1] = 'M';
-        record.event.oemCD.manufacturerID[2] = 'I';
-        record.event.oemCD.oemDefined[0] = 'r';
-        record.event.oemCD.oemDefined[1] = 'e';
-        record.event.oemCD.oemDefined[2] = 'd';
-        record.event.oemCD.oemDefined[3] = 'f';
-        record.event.oemCD.oemDefined[4] = 'i';
-        record.event.oemCD.oemDefined[5] = 's';
 
-        log<level::ERR>("Invalid recordType");
-        return record;
+    if ((recordType >= oemRecordTypeC0 && recordType <= oemRecordTypeDF) ||
+        (recordType >= oemRecordTypeE0 && recordType <= oemRecordTypeFE))
+    {
+        auto it = m.find("SENSOR_DATA");
+        if (it != m.end())
+        {
+            const std::string& oemSelData = it->second;
+
+            if (oemSelData.empty())
+            {
+                log<level::ERR>("SENSOR_DATA is empty");
+                return record;
+            }
+
+            if (recordType >= oemRecordTypeC0 && recordType <= oemRecordTypeDF)
+            {
+                constexpr size_t manufacturerIDSize =
+                    sizeof(record.event.oemCD.manufacturerID);
+                constexpr size_t oemDefinedSize =
+                    sizeof(record.event.oemCD.oemDefined);
+                constexpr size_t requiredSize =
+                    manufacturerIDSize + oemDefinedSize;
+
+                if (oemSelData.size() > requiredSize)
+                {
+                    log<level::WARNING>(
+                        "SENSOR_DATA larger than expected for C0-DF - extra bytes ignored");
+                }
+
+                if (oemSelData.size() < requiredSize)
+                {
+                    log<level::ERR>(
+                        "SENSOR_DATA too small for C0-DF recordType");
+                    return record;
+                }
+
+                std::memcpy(record.event.oemCD.manufacturerID,
+                            oemSelData.data(), manufacturerIDSize);
+                std::memcpy(record.event.oemCD.oemDefined,
+                            oemSelData.data() + manufacturerIDSize,
+                            oemDefinedSize);
+
+                record.event.oemCD.recordID = recordId;
+                record.event.oemCD.recordType = recordType;
+                record.event.oemCD.timeStamp = static_cast<uint32_t>(
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        chronoTimeStamp)
+                        .count());
+
+                return record;
+            }
+            else if (recordType >= oemRecordTypeE0 &&
+                     recordType <= oemRecordTypeFE)
+            {
+                constexpr size_t oemDefinedSize =
+                    sizeof(record.event.oemEF.oemDefined); // 13
+
+                if (oemSelData.size() > oemDefinedSize)
+                {
+                    log<level::WARNING>(
+                        "SENSOR_DATA larger than expected for E0-FE; extra bytes ignored");
+                }
+
+                if (oemSelData.size() < oemDefinedSize)
+                {
+                    log<level::ERR>(
+                        "SENSOR_DATA too small for E0-FE recordType");
+                    return record;
+                }
+
+                std::memcpy(record.event.oemEF.oemDefined, oemSelData.data(),
+                            oemDefinedSize);
+
+                record.event.oemEF.recordID = recordId;
+                record.event.oemEF.recordType = recordType;
+
+                return record;
+            }
+        }
+        else
+        {
+            log<level::ERR>("Invalid Record, oem data is not available");
+            return record;
+        }
     }
+
     // Default values when there is no matched sensor
     record.event.eventRecord.sensorType = 0;
     record.event.eventRecord.sensorNum = 0xFF;
@@ -478,11 +545,15 @@ void selPolicyCallback(sdbusplus::message::message& msg)
 {
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
     std::string path = msg.get_path();
+
     auto methodCall =
         bus.new_method_call(msg.get_sender(), msg.get_path(),
                             "org.freedesktop.DBus.Properties", "GetAll");
+
     methodCall.append("xyz.openbmc_project.Logging.Settings");
-    boost::container::flat_map<std::string, std::variant<std::string, bool>>
+
+    boost::container::flat_map<
+        std::string, std::variant<std::string, std::map<std::string, bool>>>
         selStatus;
 
     try
@@ -490,23 +561,36 @@ void selPolicyCallback(sdbusplus::message::message& msg)
         sdbusplus::message::message getSelStatus = bus.call(methodCall);
         getSelStatus.read(selStatus);
     }
-    catch (const sdbusplus::exception_t&)
+    catch (const sdbusplus::exception_t& e)
     {
-        std::cerr << "error getging SEL data from setting \n";
+        std::cerr << "Error getting SEL data from settings: " << e.what()
+                  << "\n";
+        return;
     }
 
-    auto getPolicy = selStatus.find("SelPolicy");
-    if (getPolicy != selStatus.end())
+    // SelPolicy is a string
+    if (auto it = selStatus.find("SelPolicy"); it != selStatus.end())
     {
-        std::string policy = std::get<std::string>(getPolicy->second);
-        selPolicyInfo.policy = policy;
+        selPolicyInfo.policy = std::get<std::string>(it->second);
     }
-    auto getErrorFlag = selStatus.find("ErrorFlag");
-    auto getInfoFlag = selStatus.find("InfoFlag");
-    if (getErrorFlag != selStatus.end() && getInfoFlag != selStatus.end())
+
+    // ErrorFlags and InfoFlags are a{sb}
+    if (auto it = selStatus.find("ErrorFlags"); it != selStatus.end())
     {
-        selPolicyInfo.infoFlag = std::get<bool>(getInfoFlag->second);
-        selPolicyInfo.errorFlag = std::get<bool>(getErrorFlag->second);
+        const auto& flags = std::get<std::map<std::string, bool>>(it->second);
+        if (auto f = flags.find("ipmi"); f != flags.end())
+        {
+            selPolicyInfo.errorFlag = f->second;
+        }
+    }
+
+    if (auto it = selStatus.find("InfoFlags"); it != selStatus.end())
+    {
+        const auto& flags = std::get<std::map<std::string, bool>>(it->second);
+        if (auto f = flags.find("ipmi"); f != flags.end())
+        {
+            selPolicyInfo.infoFlag = f->second;
+        }
     }
 }
 
@@ -517,13 +601,13 @@ void registerSelCallbackHandler()
     if (!selAddedMatch)
     {
         selAddedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            bus, interfacesAdded("/xyz/openbmc_project/logging"),
+            bus, interfacesAdded("/xyz/openbmc_project/logging/ipmi"),
             std::bind(selAddedCallback, std::placeholders::_1));
     }
     if (!selRemovedMatch)
     {
         selRemovedMatch = std::make_unique<sdbusplus::bus::match::match>(
-            bus, interfacesRemoved("/xyz/openbmc_project/logging"),
+            bus, interfacesRemoved("/xyz/openbmc_project/logging/ipmi"),
             std::bind(selRemovedCallback, std::placeholders::_1));
     }
     if (!selUpdatedMatch)
@@ -531,6 +615,7 @@ void registerSelCallbackHandler()
         selUpdatedMatch = std::make_unique<sdbusplus::bus::match::match>(
             bus,
             type::signal() + member("PropertiesChanged"s) +
+                path_namespace("/xyz/openbmc_project/logging/ipmi") +
                 interface("org.freedesktop.DBus.Properties"s) +
                 argN(0, "xyz.openbmc_project.Logging.Entry"),
             std::bind(selUpdatedCallback, std::placeholders::_1));
@@ -992,6 +1077,25 @@ void startMatch(void)
             recalculateHashes();
             lastDevId = 0xFF;
         });
+#if CONFIGURABLE_FRU == 1
+
+    fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
+                            [](sdbusplus::message::message& message) {
+                                sdbusplus::message::object_path path;
+                                ObjectType object;
+                                try
+                                {
+                                    message.read(path, object);
+                                }
+                                catch (const sdbusplus::exception_t&)
+                                {
+                                    return;
+                                }
+
+                                recalculateHashes();
+                                initFruConfig();
+                            });
+#endif
 
     // call once to populate
     boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
@@ -1677,10 +1781,11 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         try
         {
             objpath = getPathFromSensorNumber(sensorNumber, sensorType);
-	    if (objpath.empty()) {
-		    log<level::ERR>("Requested sensor not present");
-		    return ipmi::responseSensorInvalid();
-	    }
+            if (objpath.empty())
+            {
+                log<level::ERR>("Requested sensor not present");
+                return ipmi::responseSensorInvalid();
+            }
             typeFromPath = getSensorTypeFromPath(objpath);
             if (typeFromPath !=
                 sensorType) // if sensorType not matching, we assume sensor not
@@ -1807,11 +1912,12 @@ ipmi::RspType<uint8_t> ipmiStorageClearSEL(
     // Per the IPMI spec, need to cancel any reservation when the SEL is cleared
     cancelSELReservation();
 
+    uint32_t clearEntries = 0;
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
-    auto service = ipmi::getService(bus, ipmi::sel::logIntf, ipmi::sel::logObj);
-    auto method =
-        bus.new_method_call(service.c_str(), ipmi::sel::logObj,
-                            ipmi::sel::logIntf, ipmi::sel::logDeleteAllMethod);
+    auto service = ipmi::getService(bus, logIntf, logBasePath);
+    auto method = bus.new_method_call(service.c_str(), logBasePath, logIntf,
+                                      logDeleteLogTypeMethod);
+    method.append("ipmi", clearEntries);
     try
     {
         bus.call_noreply(method);
@@ -1860,7 +1966,7 @@ ipmi::RspType<uint16_t // deleted record ID
     }
     SELCacheMap::const_iterator iter;
 
-    uint16_t delRecordID = 0;
+    uint32_t delRecordID = 0;
 
     if (selRecordID == ipmi::sel::firstEntry)
     {
@@ -1887,7 +1993,7 @@ ipmi::RspType<uint16_t // deleted record ID
     auto objPath = getLoggingObjPath(iter->first);
     try
     {
-        service = ipmi::getService(bus, ipmi::sel::logDeleteIntf, objPath);
+        service = ipmi::getService(bus, logIntf, logBasePath);
     }
     catch (const std::runtime_error& e)
     {
@@ -1895,8 +2001,9 @@ ipmi::RspType<uint16_t // deleted record ID
         return ipmi::responseUnspecifiedError();
     }
 
-    auto methodCall = bus.new_method_call(service.c_str(), objPath.c_str(),
-                                          ipmi::sel::logDeleteIntf, "Delete");
+    auto methodCall = bus.new_method_call(service.c_str(), logBasePath, logIntf,
+                                          logDeleteLogTypeMethod);
+    methodCall.append("ipmi", delRecordID);
     try
     {
         auto reply = bus.call(methodCall);
@@ -1906,7 +2013,7 @@ ipmi::RspType<uint16_t // deleted record ID
         return ipmi::responseUnspecifiedError();
     }
 
-    return ipmi::responseSuccess(delRecordID);
+    return ipmi::responseSuccess(static_cast<uint16_t>(delRecordID));
 }
 
 ipmi::RspType<uint32_t> ipmiStorageGetSELTime()
@@ -2056,12 +2163,13 @@ void initFruConfig()
         {
             auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
             fruId = static_cast<uint8_t>(*fruIdValue);
-	    if (fruSizeIter != properties.end()) {
-		    auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
-		    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+            if (fruSizeIter != properties.end())
+            {
+                auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
+                uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
 
-		    fruMap.push_back(std::make_pair(fruId, fruSize));
-	    }
+                fruMap.push_back(std::make_pair(fruId, fruSize));
+            }
         }
     }
 }

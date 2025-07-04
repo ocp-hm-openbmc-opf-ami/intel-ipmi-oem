@@ -440,8 +440,8 @@ static bool getSensorMap(boost::asio::yield_context yield,
         }
 
         SensorCache[sensorConnection] = managedObjects;
-        // Update time after finish building the map which allow the
-        // data to be cached for updatePeriod plus the build time.
+        //  Update time after finish building the map which allow the
+        //  data to be cached for updatePeriod plus the build time.
         updateTimeMap[sensorConnection] = std::chrono::steady_clock::now();
     }
     auto connection = SensorCache.find(sensorConnection);
@@ -2178,7 +2178,6 @@ static int getSensorDataRecord(
             "getSensorDataRecord: recordID > lastRecord error"); */
         return GENERAL_ERROR;
     }
-
     if (recordID >= ipmi::getNumberOfSensors())
     {
         if (auto err = ipmi::sensor::getOtherSensorsDataRecord(ctx, recordID,
@@ -2218,6 +2217,7 @@ static int getSensorDataRecord(
     auto status =
         getSensorConnection(ctx, static_cast<uint8_t>(sensNumFromRecID),
                             connection, path, &interfaces);
+
     if (status)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
@@ -2256,7 +2256,6 @@ static int getSensorDataRecord(
         {
             constructSensorSdrHeaderKey(sensorNum, recordID, record);
         }
-
         else if (!constructSensorSdr(ctx, ipmiDecoratorPaths, sensorNum,
                                      recordID, connection, path, record))
         {
@@ -2266,7 +2265,6 @@ static int getSensorDataRecord(
                           reinterpret_cast<uint8_t*>(&record) + sizeof(record));
         return nextRecord;
     }
-
     // handle discrete senosrs
     if (std::find(interfaces.begin(), interfaces.end(),
                   sensor::discreteInterface) != interfaces.end())
@@ -2304,7 +2302,6 @@ static ipmi::RspType<uint8_t, // respcount
     uint8_t lunsAndDynamicPopulation{0x80};
     constexpr uint8_t getSdrCount{1};
     constexpr uint8_t getSensorCount{0};
-
     if (!getSensorSubtree(sensorTree) || sensorTree.empty())
     {
         return ipmi::responseResponseError();
@@ -3215,7 +3212,6 @@ ipmi::RspType<uint16_t,            // next record ID
             "ipmiStorageGetSDR: responseInvalidReservationId");
         return ipmi::responseInvalidReservationId();
     }
-
     auto& sensorTree = getSensorTree();
     if (!getSensorSubtree(sensorTree) && sensorTree.empty())
     {
@@ -3247,6 +3243,7 @@ ipmi::RspType<uint16_t,            // next record ID
 
     size_t sdrLength =
         sizeof(get_sdr::SensorDataRecordHeader) + hdr->record_length;
+
     if (offset >= sdrLength)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
