@@ -6468,8 +6468,8 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
     try
     {
         // Check the CredentialBootstrapping property status
-        bool isCredentialBooStrapSet = getCredentialBootStrap();
-        if (!isCredentialBooStrapSet)
+        bool isCredentialBootStrapSet = getCredentialBootStrap();
+        if (!isCredentialBootStrapSet)
         {
             phosphor::logging::log<level::ERR>(
                 "ipmiGetBootStrapAccount: Credential BootStrapping Disabled "
@@ -6519,54 +6519,47 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
                 "Password");
             return ipmi::responseResponseError();
         }
-
-        std::vector<uint8_t> respUserNameBuf, respPasswordBuf;
-        std::copy(userName.begin(), userName.end(),
-                  std::back_inserter(respUserNameBuf));
-        std::copy(password.begin(), password.end(),
-                  std::back_inserter(respPasswordBuf));
-
-        // Asynchronously create the user and update the password
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
-        std::string service =
-            getService(*dbus, userMgrInterface, userMgrObjBasePath);
 
-        dbus->async_method_call(
-            [dbus, ctx, userName, password, service,
-             disableCredBootStrap](const boost::system::error_code& ec,
-                                   sdbusplus::message::message& reply) mutable {
-                if (ec || reply.is_method_error())
-                {
-                    phosphor::logging::log<phosphor::logging::level::ERR>(
-                        "Error returns from call to dbus. BootStrap Failed");
-                }
-                else
-                {
-                    boost::system::error_code ec;
-                    int retval =
-                        pamUpdatePasswd(userName.c_str(), password.c_str());
-                    if (retval != PAM_SUCCESS)
-                    {
-                        dbus->yield_method_call<void>(
-                            ctx->yield, ec, service.c_str(),
-                            userMgrObjBasePath + userName, usersDeleteIface,
-                            "Delete");
+        std::string service = getService(*dbus, userMgrInterface,
+                                         userMgrObjBasePath);
 
-                        phosphor::logging::log<phosphor::logging::level::ERR>(
-                            "ipmiGetBootStrapAccount : Failed to update password.");
-                    }
-                    else
-                    {
-                        // Update the "CredentialBootstrap" Dbus property
-                        setCredentialBootStrap(disableCredBootStrap);
-                    }
-                }
-            },
-            service, userMgrObjBasePath, userMgrInterface, createUserMethod,
-            userName, std::vector<std::string>{"redfish-hostiface"},
-            "priv-admin", true);
-
-        return ipmi::responseSuccess(respUserNameBuf, respPasswordBuf);
+        // create the new user with only redfish-hostiface group access
+        auto method = dbus->new_method_call(service.c_str(), userMgrObjBasePath,
+                                            userMgrInterface, createUserMethod);
+        method.append(userName, std::vector<std::string>{"redfish-hostiface"},
+                      "priv-admin", true);
+        auto reply = dbus->call(method);
+        if (reply.is_method_error())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+	       "Error returns from call to dbus. BootStrap Failed");
+            return ipmi::responseResponseError();
+        }
+        // update the password
+        boost::system::error_code ec;
+        int retval = pamUpdatePasswd(userName.c_str(), password.c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            dbus->yield_method_call<void>(ctx->yield, ec, service.c_str(),
+                                          userMgrObjBasePath + userName,
+                                          usersDeleteIface, "Delete");
+             phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiGetBootStrapAccount : Failed to update password.");
+            return ipmi::responseUnspecifiedError();
+        }
+        else
+        {
+            // update the "CredentialBootstrap" Dbus property w.r.to
+            // disable crendential BootStrap status
+            setCredentialBootStrap(disableCredBootStrap);
+             std::vector<uint8_t> respUserNameBuf, respPasswordBuf;
+            std::copy(userName.begin(), userName.end(),
+                      std::back_inserter(respUserNameBuf));
+            std::copy(password.begin(), password.end(),
+                      std::back_inserter(respPasswordBuf));
+            return ipmi::responseSuccess(respUserNameBuf, respPasswordBuf);
+        }
     }
     catch (const std::exception& e)
     {
@@ -6620,8 +6613,8 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetManagerCertFingerPrint(
     const EVP_MD* fdig = EVP_sha256();
     // Check the CredentialBootstrapping property status,
     // if disabled, then reject the command with success code.
-    bool isCredentialBooStrapSet = getCredentialBootStrap();
-    if (!isCredentialBooStrapSet)
+    bool isCredentialBootStrapSet = getCredentialBootStrap();
+    if (!isCredentialBootStrapSet)
     {
         phosphor::logging::log<level::ERR>(
             "ipmiGetManagerCertFingerPrint: Credential BootStrapping Disabled "
