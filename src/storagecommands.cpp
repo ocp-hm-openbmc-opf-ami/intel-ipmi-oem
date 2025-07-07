@@ -1781,11 +1781,6 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         try
         {
             objpath = getPathFromSensorNumber(sensorNumber, sensorType);
-            if (objpath.empty())
-            {
-                log<level::ERR>("Requested sensor not present");
-                return ipmi::responseSensorInvalid();
-            }
             typeFromPath = getSensorTypeFromPath(objpath);
             if (typeFromPath !=
                 sensorType) // if sensorType not matching, we assume sensor not
