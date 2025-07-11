@@ -1756,6 +1756,31 @@ ipmi::RspType<uint16_t,             // Next Record ID
                                  response);
 }
 
+uint16_t readLastEntryId()
+{
+    sdbusplus::bus::bus busLog{ipmid_get_sd_bus_connection()};
+    auto methodCall = busLog.new_method_call(
+        "xyz.openbmc_project.Settings", "/xyz/openbmc_project/logging/settings",
+        "org.freedesktop.DBus.Properties", "Get");
+
+    methodCall.append("xyz.openbmc_project.Logging.Settings", "lastEntryId");
+
+    try
+    {
+        auto reply = busLog.call(methodCall);
+
+        std::variant<uint16_t> value;
+        reply.read(value);
+
+        return std::get<uint16_t>(value);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        std::cerr << "Failed to read lastEntryId : ERROR=" << e.what() << "\n";
+        return 0;
+    }
+}
+
 ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
     uint16_t recordID, uint8_t recordType, [[maybe_unused]] uint32_t timeStamp,
     uint16_t generatorID, [[maybe_unused]] uint8_t evmRev, uint8_t sensorType,
@@ -1871,10 +1896,8 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         return ipmi::responseSuccess(recordID);
     }
 
-    auto beginIter = selCacheMap.rbegin();
-    recordID = beginIter->first;
-
-    return ipmi::responseSuccess(++recordID);
+    recordID = readLastEntryId();
+    return ipmi::responseSuccess(recordID);
 }
 
 ipmi::RspType<uint8_t> ipmiStorageClearSEL(
