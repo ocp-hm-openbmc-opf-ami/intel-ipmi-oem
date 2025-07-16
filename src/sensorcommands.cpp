@@ -2369,7 +2369,7 @@ static ipmi::RspType<uint8_t, // respcount
 }
 ipmi::RspType<uint8_t, // Action Supported
               uint8_t,
-              uint8_t // No of Event Filtering Table Entries
+              uint8_t  // No of Event Filtering Table Entries
               >
     ipmiSenGetPefCapabilities()
 {
@@ -3229,7 +3229,7 @@ ipmi::RspType<uint16_t,            // next record ID
     if (nextRecordId < 0)
     {
         lg2::error("ipmiStorageGetSDR: fail to get SDR");
-        return ipmi::responseInvalidFieldRequest();
+        return ipmi::responseSensorInvalid();
     }
 
     get_sdr::SensorDataRecordHeader* hdr =

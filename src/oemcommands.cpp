@@ -4337,9 +4337,9 @@ std::vector<uint8_t> convertToBytes(std::string data)
     return val;
 }
 
-ipmi::RspType<message::Payload>
-    ipmiOEMGetSmtpConfig(ipmi::Context::ptr ctx, uint8_t server,
-                         uint8_t parameter, message::Payload& req)
+ipmi::RspType<message::Payload> ipmiOEMGetSmtpConfig(
+    ipmi::Context::ptr ctx, uint8_t server, uint8_t parameter,
+    message::Payload& req)
 {
     message::Payload ret;
     std::string smtpIntf{};
@@ -4667,7 +4667,7 @@ int dateTimeCheck(std::string dateTime)
         {
             return 1;
         } // else if
-    }     // if
+    } // if
 
     if (std::stoi(dateList.at(1)) == 4 || std::stoi(dateList.at(1)) == 6 ||
         std::stoi(dateList.at(1)) == 9 || std::stoi(dateList.at(1)) == 11)
@@ -4888,7 +4888,7 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                         {
                             return 1;
                         } // else if
-                    }     // for
+                    } // for
 
                     return 0;
                 } // else if
@@ -5109,7 +5109,7 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
             {
                 properties = {};
                 return ipmi::responseInvalidFieldRequest();
-            }            
+            }
 
             if (action == 0b01)
             {
@@ -5326,7 +5326,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(
                     {
                         num++;
                     } // if
-                }     // for
+                } // for
 
                 payload.pack(num);
             }
@@ -5382,7 +5382,7 @@ ipmi::RspType<message::Payload> ipmiOEMGetFirewallConfiguration(
                 {
                     i++;
                 } // if
-            }     // for
+            } // for
 
             auto [preload, target, control, protocol, startIPAddr, endIPAddr,
                   startPort, endPort, macAddr, startTime,
@@ -5585,7 +5585,7 @@ uint32_t CalculateCRC32(unsigned char* Buffer, uint32_t Size)
     /* Read the data and calculate crc32 */
     for (i = 0; i < Size; i++)
         crc32 = ((crc32) >> 8) ^
-                CrcLookUpTable[(Buffer[i]) ^ ((crc32)&0x000000FF)];
+                CrcLookUpTable[(Buffer[i]) ^ ((crc32) & 0x000000FF)];
     return ~crc32;
 }
 
@@ -6468,8 +6468,8 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
     try
     {
         // Check the CredentialBootstrapping property status
-        bool isCredentialBooStrapSet = getCredentialBootStrap();
-        if (!isCredentialBooStrapSet)
+        bool isCredentialBootStrapSet = getCredentialBootStrap();
+        if (!isCredentialBootStrapSet)
         {
             phosphor::logging::log<level::ERR>(
                 "ipmiGetBootStrapAccount: Credential BootStrapping Disabled "
@@ -6519,54 +6519,47 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
                 "Password");
             return ipmi::responseResponseError();
         }
-
-        std::vector<uint8_t> respUserNameBuf, respPasswordBuf;
-        std::copy(userName.begin(), userName.end(),
-                  std::back_inserter(respUserNameBuf));
-        std::copy(password.begin(), password.end(),
-                  std::back_inserter(respPasswordBuf));
-
-        // Asynchronously create the user and update the password
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
         std::string service =
             getService(*dbus, userMgrInterface, userMgrObjBasePath);
 
-        dbus->async_method_call(
-            [dbus, ctx, userName, password, service,
-             disableCredBootStrap](const boost::system::error_code& ec,
-                                   sdbusplus::message::message& reply) mutable {
-                if (ec || reply.is_method_error())
-                {
-                    phosphor::logging::log<phosphor::logging::level::ERR>(
-                        "Error returns from call to dbus. BootStrap Failed");
-                }
-                else
-                {
-                    boost::system::error_code ec;
-                    int retval =
-                        pamUpdatePasswd(userName.c_str(), password.c_str());
-                    if (retval != PAM_SUCCESS)
-                    {
-                        dbus->yield_method_call<void>(
-                            ctx->yield, ec, service.c_str(),
-                            userMgrObjBasePath + userName, usersDeleteIface,
-                            "Delete");
-
-                        phosphor::logging::log<phosphor::logging::level::ERR>(
-                            "ipmiGetBootStrapAccount : Failed to update password.");
-                    }
-                    else
-                    {
-                        // Update the "CredentialBootstrap" Dbus property
-                        setCredentialBootStrap(disableCredBootStrap);
-                    }
-                }
-            },
-            service, userMgrObjBasePath, userMgrInterface, createUserMethod,
-            userName, std::vector<std::string>{"redfish-hostiface"},
-            "priv-admin", true);
-
-        return ipmi::responseSuccess(respUserNameBuf, respPasswordBuf);
+        // create the new user with only redfish-hostiface group access
+        auto method = dbus->new_method_call(service.c_str(), userMgrObjBasePath,
+                                            userMgrInterface, createUserMethod);
+        method.append(userName, std::vector<std::string>{"redfish-hostiface"},
+                      "priv-admin", true);
+        auto reply = dbus->call(method);
+        if (reply.is_method_error())
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Error returns from call to dbus. BootStrap Failed");
+            return ipmi::responseResponseError();
+        }
+        // update the password
+        boost::system::error_code ec;
+        int retval = pamUpdatePasswd(userName.c_str(), password.c_str());
+        if (retval != PAM_SUCCESS)
+        {
+            dbus->yield_method_call<void>(ctx->yield, ec, service.c_str(),
+                                          userMgrObjBasePath + userName,
+                                          usersDeleteIface, "Delete");
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiGetBootStrapAccount : Failed to update password.");
+            return ipmi::responseUnspecifiedError();
+        }
+        else
+        {
+            // update the "CredentialBootstrap" Dbus property w.r.to
+            // disable crendential BootStrap status
+            setCredentialBootStrap(disableCredBootStrap);
+            std::vector<uint8_t> respUserNameBuf, respPasswordBuf;
+            std::copy(userName.begin(), userName.end(),
+                      std::back_inserter(respUserNameBuf));
+            std::copy(password.begin(), password.end(),
+                      std::back_inserter(respPasswordBuf));
+            return ipmi::responseSuccess(respUserNameBuf, respPasswordBuf);
+        }
     }
     catch (const std::exception& e)
     {
@@ -6620,8 +6613,8 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetManagerCertFingerPrint(
     const EVP_MD* fdig = EVP_sha256();
     // Check the CredentialBootstrapping property status,
     // if disabled, then reject the command with success code.
-    bool isCredentialBooStrapSet = getCredentialBootStrap();
-    if (!isCredentialBooStrapSet)
+    bool isCredentialBootStrapSet = getCredentialBootStrap();
+    if (!isCredentialBootStrapSet)
     {
         phosphor::logging::log<level::ERR>(
             "ipmiGetManagerCertFingerPrint: Credential BootStrapping Disabled "
@@ -6930,9 +6923,9 @@ static inline void checkAndThrowError(boost::system::error_code& ec,
 
 // General function to get a property value
 template <typename T>
-static inline T
-    getPropertyValue(const DbusInterfaceMap& intfMap,
-                     const std::string& intfName, const std::string& propName)
+static inline T getPropertyValue(const DbusInterfaceMap& intfMap,
+                                 const std::string& intfName,
+                                 const std::string& propName)
 {
     for (const auto& intf : intfMap)
     {
@@ -7296,8 +7289,8 @@ ipmi::RspType<uint16_t, uint16_t, std::vector<uint8_t>> ipmiGetBiosPostCode()
     return ipmi::response(ipmiCCBIOSPostCodeError);
 }
 
-ipmi::RspType<std::vector<uint8_t>>
-    ipmiOEMGetTimezone([[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<std::vector<uint8_t>> ipmiOEMGetTimezone(
+    [[maybe_unused]] ipmi::Context::ptr ctx)
 {
     std::string timezone;
 
