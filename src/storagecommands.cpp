@@ -824,8 +824,8 @@ void recalculateHashes()
         }
 
         uint8_t fruHash = 0;
-#if CONFIGURABLE_FRU == 0
         std::hash<std::string> hasher;
+#if CONFIGURABLE_FRU == 0
         if (chassisType.compare(chassisTypeRackMount) != 0)
         {
             fruHash = hasher(fru.first.str);
@@ -861,6 +861,7 @@ void recalculateHashes()
             auto configAddr = properties.find("Address");
             uint8_t confBus = 0;
             uint8_t confAddr = 0;
+            fruHash = 0;
 
             if (configBus == properties.end() || configAddr == properties.end())
             {
@@ -897,6 +898,10 @@ void recalculateHashes()
                     fruMap.push_back(std::make_pair(fruHash, fruSize));
                     break;
                 }
+            }
+            else
+            {
+                fruHash = hasher(fru.first.str);
             }
         }
 #endif
