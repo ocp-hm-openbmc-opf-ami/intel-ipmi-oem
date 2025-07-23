@@ -1082,25 +1082,6 @@ void startMatch(void)
             recalculateHashes();
             lastDevId = 0xFF;
         });
-#if CONFIGURABLE_FRU == 1
-
-    fruMatches.emplace_back(*bus, "type='signal',member='InterfacesAdded'",
-                            [](sdbusplus::message::message& message) {
-                                sdbusplus::message::object_path path;
-                                ObjectType object;
-                                try
-                                {
-                                    message.read(path, object);
-                                }
-                                catch (const sdbusplus::exception_t&)
-                                {
-                                    return;
-                                }
-
-                                recalculateHashes();
-                                initFruConfig();
-                            });
-#endif
 
     // call once to populate
     boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
