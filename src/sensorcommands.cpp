@@ -171,12 +171,6 @@ ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
             {
                 *interfaces = sensor.second.begin()->second;
             }
-            else
-            {
-                std::cerr
-                    << "Warning: interfaces is nullptr, skipping assignment!"
-                    << std::endl;
-            }
 
             found = true;
             break;
