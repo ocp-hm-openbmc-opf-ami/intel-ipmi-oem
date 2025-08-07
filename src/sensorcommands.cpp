@@ -156,7 +156,7 @@ ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
 
     if (path.empty())
     {
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return IPMI_CC_SENSOR_INVALID;
     }
 
     // Find the corresponding sensor in the tree
@@ -1095,6 +1095,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         return ipmi::responseInvalidFieldRequest();
     }
 
+    std::string connection;
+    std::string path;
+
+    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
+    if (status)
+    {
+        return ipmi::response(status);
+    }
+
     // lower nc and upper nc not suppported on any sensor
     if (lowerNonRecovThreshMask || upperNonRecovThreshMask)
     {
@@ -1107,15 +1116,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
           upperCriticalThreshMask | upperNonRecovThreshMask))
     {
         return ipmi::responseSuccess();
-    }
-
-    std::string connection;
-    std::string path;
-
-    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
-    if (status)
-    {
-        return ipmi::response(status);
     }
 
     SensorMap sensorMap;
