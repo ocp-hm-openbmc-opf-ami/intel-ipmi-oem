@@ -5080,16 +5080,6 @@ ipmi::RspType<message::Payload> ipmiOEMSetFirewallConfiguration(
                 }
             }
 
-            if (properties.protocol ==
-                sdbusplus::xyz::openbmc_project::Network::server::
-                    convertForMessage(FirewallIface::Protocol::UNSPECIFIED))
-            {
-                properties.protocol = sdbusplus::xyz::openbmc_project::Network::
-                    server::convertForMessage(FirewallIface::Protocol::ALL);
-                properties.control |= static_cast<uint8_t>(
-                    ami::general::network::FirewallFlags::PROTOCOL);
-            }
-
             if (IPver == 0b00)
             {
                 properties.IPver = sdbusplus::xyz::openbmc_project::Network::
