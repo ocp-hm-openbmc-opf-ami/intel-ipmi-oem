@@ -2786,7 +2786,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             }
             if ((paraData != setComplete) && (paraData != setInProgress))
             {
-                return response(ipmiCCParamNotSupported);
+                return ipmi::responseInvalidFieldRequest();
             }
             pefSetInPro = paraData;
             break;
