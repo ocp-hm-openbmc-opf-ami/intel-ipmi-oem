@@ -110,8 +110,6 @@ static sdbusplus::bus::match_t sensorAdded(
     "type='signal',member='InterfacesAdded',arg0path='/xyz/openbmc_project/"
     "sensors/'",
     [](sdbusplus::message_t&) {
-        syslog(LOG_WARNING,
-               "Sensor interface added - clearing cache and resetting paths.");
         getSensorTree().clear();
         getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
         sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
@@ -124,9 +122,6 @@ static sdbusplus::bus::match_t sensorRemoved(
     "type='signal',member='InterfacesRemoved',arg0path='/xyz/openbmc_project/"
     "sensors/'",
     [](sdbusplus::message_t&) {
-        syslog(
-            LOG_WARNING,
-            "Sensor interface removed - clearing cache and resetting paths.");
         getSensorTree().clear();
         getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
         sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
@@ -147,33 +142,21 @@ ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
 
     if (sensorTree.empty())
     {
-        std::cerr << "Error: Sensor tree is empty!" << std::endl;
         return IPMI_CC_RESPONSE_ERROR;
     }
 
     // Check for null context
     if (ctx == nullptr)
     {
-        std::cerr << "Error: Context is null!" << std::endl;
         return IPMI_CC_RESPONSE_ERROR;
     }
 
     // Generate the sensor path based on sensnum
     path = getPathFromSensorNumber((ctx->lun << 8) | sensnum);
-    std::cerr << "Generated Path: " << path << std::endl;
 
     if (path.empty())
     {
-        std::cerr << "Error: No valid path found for sensor number "
-                  << static_cast<int>(sensnum) << std::endl;
-        return IPMI_CC_INVALID_FIELD_REQUEST;
-    }
-
-    // Print available sensor paths in the sensor tree
-    std::cerr << "Checking Sensor Tree for path: " << path << std::endl;
-    for (const auto& sensor : sensorTree)
-    {
-        std::cerr << "Available Sensor Path: " << sensor.first << std::endl;
+        return IPMI_CC_SENSOR_INVALID;
     }
 
     // Find the corresponding sensor in the tree
@@ -182,21 +165,11 @@ ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
     {
         if (path == sensor.first)
         {
-            std::cerr << "Found matching path: " << path << std::endl;
-
             connection = sensor.second.begin()->first;
-            std::cerr << "Connection set: " << connection << std::endl;
 
             if (interfaces)
             {
                 *interfaces = sensor.second.begin()->second;
-                std::cerr << "Interfaces assigned successfully!" << std::endl;
-            }
-            else
-            {
-                std::cerr
-                    << "Warning: interfaces is nullptr, skipping assignment!"
-                    << std::endl;
             }
 
             found = true;
@@ -207,8 +180,6 @@ ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
     // If no matching path is found, return an error
     if (!found)
     {
-        std::cerr << "Error: Path " << path << " not found in sensorTree!"
-                  << std::endl;
         return IPMI_CC_RESPONSE_ERROR;
     }
 
@@ -1124,6 +1095,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         return ipmi::responseInvalidFieldRequest();
     }
 
+    std::string connection;
+    std::string path;
+
+    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
+    if (status)
+    {
+        return ipmi::response(status);
+    }
+
     // lower nc and upper nc not suppported on any sensor
     if (lowerNonRecovThreshMask || upperNonRecovThreshMask)
     {
@@ -1136,15 +1116,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
           upperCriticalThreshMask | upperNonRecovThreshMask))
     {
         return ipmi::responseSuccess();
-    }
-
-    std::string connection;
-    std::string path;
-
-    ipmi::Cc status = getSensorConnection(ctx, sensorNum, connection, path);
-    if (status)
-    {
-        return ipmi::response(status);
     }
 
     SensorMap sensorMap;
@@ -2815,7 +2786,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             }
             if ((paraData != setComplete) && (paraData != setInProgress))
             {
-                return response(ipmiCCParamNotSupported);
+                return ipmi::responseInvalidFieldRequest();
             }
             pefSetInPro = paraData;
             break;
