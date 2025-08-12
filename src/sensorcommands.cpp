@@ -104,31 +104,6 @@ constexpr static std::array<std::pair<const char*, SensorUnits>, 5> sensorUnits{
      {"power", SensorUnits::watts}}};
 
 void registerSensorFunctions() __attribute__((constructor));
-
-static sdbusplus::bus::match_t sensorAdded(
-    *getSdBus(),
-    "type='signal',member='InterfacesAdded',arg0path='/xyz/openbmc_project/"
-    "sensors/'",
-    [](sdbusplus::message_t&) {
-        getSensorTree().clear();
-        getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
-        sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count();
-    });
-
-static sdbusplus::bus::match_t sensorRemoved(
-    *getSdBus(),
-    "type='signal',member='InterfacesRemoved',arg0path='/xyz/openbmc_project/"
-    "sensors/'",
-    [](sdbusplus::message_t&) {
-        getSensorTree().clear();
-        getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
-        sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
-    });
-
 ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
                                std::string& connection, std::string& path,
                                std::vector<std::string>* interfaces)
