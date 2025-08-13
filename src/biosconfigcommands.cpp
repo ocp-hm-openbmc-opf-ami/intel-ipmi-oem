@@ -68,6 +68,9 @@ static constexpr const char* biosConfigBaseMgrPath =
 static constexpr const char* biosConfigIntf =
     "xyz.openbmc_project.BIOSConfig.Manager";
 static constexpr const char* resetBIOSSettingsProp = "ResetBIOSSettings";
+
+constexpr bool debug = false;
+
 /*baseBIOSTable
 map{attributeName,struct{attributeType,readonlyStatus,displayname,
               description,menuPath,current,default,
@@ -668,8 +671,8 @@ ipmi::RspType<> ipmiOEMSetBIOSCap(ipmi::Context::ptr&, uint8_t BIOSCapabilties,
     return ipmi::responseSuccess();
 }
 
-ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t>
-    ipmiOEMGetBIOSCap(ipmi::Context::ptr&)
+ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t> ipmiOEMGetBIOSCap(
+    ipmi::Context::ptr&)
 {
     if (gNVOOBdata.mIsBIOSCapInitDone)
     {
@@ -682,9 +685,9 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t>
     }
 }
 
-ipmi::RspType<uint32_t>
-    ipmiOEMSetPayload(ipmi::Context::ptr&, uint8_t paramSel,
-                      uint8_t payloadType, std::vector<uint8_t> payload)
+ipmi::RspType<uint32_t> ipmiOEMSetPayload(ipmi::Context::ptr&, uint8_t paramSel,
+                                          uint8_t payloadType,
+                                          std::vector<uint8_t> payload)
 {
     uint8_t biosCapOffsetBit = 2; // BIT:1 0-OOB BIOS config not supported
                                   //      1-OOB BIOS config is supported
@@ -912,9 +915,9 @@ ipmi::RspType<uint32_t>
     return ipmi::responseResponseError();
 }
 
-ipmi::RspType<message::Payload>
-    ipmiOEMGetPayload(ipmi::Context::ptr& ctx, uint8_t paramSel,
-                      uint8_t payloadType, ipmi::message::Payload& payload)
+ipmi::RspType<message::Payload> ipmiOEMGetPayload(
+    ipmi::Context::ptr& ctx, uint8_t paramSel, uint8_t payloadType,
+    ipmi::message::Payload& payload)
 {
     //      1-OOB BIOS config is supported
     message::Payload retValue;
@@ -1184,8 +1187,11 @@ ipmi::RspType<std::array<uint8_t, maxSeedSize>, uint8_t,
 
 static void registerBIOSConfigFunctions(void)
 {
-    phosphor::logging::log<phosphor::logging::level::INFO>(
-        "BIOSConfig module initialization");
+    if constexpr (debug)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "BIOSConfig module initialization");
+    }
     InitNVOOBdata();
 
     registerHandler(prioOemBase, intel::netFnGeneral,

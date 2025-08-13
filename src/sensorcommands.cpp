@@ -82,6 +82,8 @@ static uint32_t sdrLastRemove = noTimestamp;
 static uint32_t sdrLastUpdate = noTimestamp;
 static constexpr size_t lastRecordIndex = 0xFFFF;
 
+constexpr bool debug = false;
+
 // The IPMI spec defines four Logical Units (LUN), each capable of supporting
 // 255 sensors. The 256 values assigned to LUN 2 are special and are not used
 // for general purpose sensors. Each LUN reserves location 0xFF. The maximum
@@ -194,15 +196,21 @@ static sdbusplus::bus::match_t thresholdChanged(
             auto ptr = std::get_if<bool>(&(findAssert->second));
             if (ptr == nullptr)
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "thresholdChanged: Assert non bool");
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "thresholdChanged: Assert non bool");
+                }
                 return;
             }
             if (*ptr)
             {
-                phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "thresholdChanged: Assert",
-                    phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "thresholdChanged: Assert",
+                        phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                }
                 thresholdDeassertMap[m.get_path()][findAssert->first] = *ptr;
             }
             else
@@ -211,9 +219,13 @@ static sdbusplus::bus::match_t thresholdChanged(
                     thresholdDeassertMap[m.get_path()][findAssert->first];
                 if (value)
                 {
-                    phosphor::logging::log<phosphor::logging::level::INFO>(
-                        "thresholdChanged: deassert",
-                        phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                    if constexpr (debug)
+                    {
+                        phosphor::logging::log<phosphor::logging::level::INFO>(
+                            "thresholdChanged: deassert",
+                            phosphor::logging::entry("SENSOR=%s",
+                                                     m.get_path()));
+                    }
                     value = *ptr;
                 }
             }
@@ -1893,9 +1905,12 @@ bool constructSensorSdr(
     if (!getSensorMap(ctx->yield, service, path, sensorMap,
                       sensorMapSdrUpdatePeriod))
     {
-        lg2::error("Failed to update sensor map for threshold sensor, "
-                   "service: {SERVICE}, path: {PATH}",
-                   "SERVICE", service, "PATH", path);
+        if constexpr (debug)
+        {
+            lg2::error("Failed to update sensor map for threshold sensor, "
+                       "service: {SERVICE}, path: {PATH}",
+                       "SERVICE", service, "PATH", path);
+        }
         return false;
     }
     record.body.sensor_capabilities = 0x68; // auto rearm - todo hysteresis
@@ -2166,8 +2181,11 @@ static int getSensorDataRecord(
 
     if (status)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: getSensorConnection error");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: getSensorConnection error");
+        }
         return GENERAL_ERROR;
     }
     uint16_t sensorNum = getSensorNumberFromPath(path);
@@ -2176,8 +2194,11 @@ static int getSensorDataRecord(
     if (((sensorNum > lun1MaxSensorNum) && (sensorNum <= maxIPMISensors)) ||
         (sensorNum > lun3MaxSensorNum))
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: invalidSensorNumber");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: invalidSensorNumber");
+        }
         return GENERAL_ERROR;
     }
     uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
@@ -2186,8 +2207,11 @@ static int getSensorDataRecord(
     if ((sensornumber != static_cast<uint8_t>(sensNumFromRecID)) &&
         (lun != ctx->lun))
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: sensor record mismatch");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: sensor record mismatch");
+        }
         return GENERAL_ERROR;
     }
     // Construct full record (SDR type 1) for the threshold sensors
@@ -3154,15 +3178,21 @@ ipmi::RspType<uint16_t,            // next record ID
     // record
     if ((sdrReservationID == 0 || reservationID != sdrReservationID) && offset)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: responseInvalidReservationId");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: responseInvalidReservationId");
+        }
         return ipmi::responseInvalidReservationId();
     }
     auto& sensorTree = getSensorTree();
     if (!getSensorSubtree(sensorTree) && sensorTree.empty())
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: getSensorSubtree error");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: getSensorSubtree error");
+        }
         return response(ccSensorInvalid);
     }
     auto& ipmiDecoratorPaths = getIpmiDecoratorPaths(ctx);
@@ -3174,7 +3204,10 @@ ipmi::RspType<uint16_t,            // next record ID
 
     if (nextRecordId < 0)
     {
-        lg2::error("ipmiStorageGetSDR: fail to get SDR");
+        if constexpr (debug)
+        {
+            lg2::error("ipmiStorageGetSDR: fail to get SDR");
+        }
         return ipmi::responseSensorInvalid();
     }
 
@@ -3182,8 +3215,11 @@ ipmi::RspType<uint16_t,            // next record ID
         reinterpret_cast<get_sdr::SensorDataRecordHeader*>(record.data());
     if (!hdr)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: record header is null");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: record header is null");
+        }
         return ipmi::responseSuccess(nextRecordId, record);
     }
 
@@ -3192,8 +3228,11 @@ ipmi::RspType<uint16_t,            // next record ID
 
     if (offset >= sdrLength)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: offset is outside the record");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: offset is outside the record");
+        }
         return ipmi::responseRetBytesUnavailable();
     }
     if (sdrLength < (offset + bytesToRead))
@@ -3204,8 +3243,11 @@ ipmi::RspType<uint16_t,            // next record ID
     uint8_t* respStart = reinterpret_cast<uint8_t*>(hdr) + offset;
     if (!respStart)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: record is null");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: record is null");
+        }
         return ipmi::responseSuccess(nextRecordId, record);
     }
     std::vector<uint8_t> recordData(respStart, respStart + bytesToRead);
