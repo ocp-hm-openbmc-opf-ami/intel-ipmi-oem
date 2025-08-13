@@ -3322,7 +3322,7 @@ void registerSensorFunctions()
     // <Arm PEF Postpone Timer>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdArmPefPostponeTimer,
-                          ipmi::Privilege::Operator,
+                          ipmi::Privilege::Admin,
                           ipmiSenArmPEFpostponeTimer);
     //<Get PEF Configuration Parameter>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
@@ -3332,7 +3332,7 @@ void registerSensorFunctions()
     //<Set PEF Configuration Parameter>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdSetPefConfigurationParams,
-                          ipmi::Privilege::Operator, ipmiPefSetConfParamCmd);
+                          ipmi::Privilege::Admin, ipmiPefSetConfParamCmd);
 
     // register all storage commands for both Sensor and Storage command
     // versions
