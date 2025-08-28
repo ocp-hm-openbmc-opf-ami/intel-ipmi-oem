@@ -709,7 +709,7 @@ ipmi::RspType<> appMTMSetSignal(ipmi::Context::ptr ctx, uint8_t signalTypeByte,
                         return ipmi::responseUnspecifiedError();
                     }
 
-                    struct input_event event;
+                    struct input_event event = {};
                     event.type = EV_SND;
                     event.code = SND_TONE;
                     event.value = 2000;
@@ -1124,8 +1124,8 @@ ipmi::RspType<> setManufacturingData(ipmi::Context::ptr ctx, uint8_t dataType,
     return ipmi::responseSuccess();
 }
 
-ipmi::RspType<uint8_t, std::array<uint8_t, maxEthSize>>
-    getManufacturingData(ipmi::Context::ptr ctx, uint8_t dataType)
+ipmi::RspType<uint8_t, std::array<uint8_t, maxEthSize>> getManufacturingData(
+    ipmi::Context::ptr ctx, uint8_t dataType)
 {
     // mfg filter logic will restrict this command executing only in mfg
     // mode.
@@ -1315,8 +1315,8 @@ ipmi::RspType<> setFITcLayout(uint32_t layout)
     return ipmi::responseSuccess();
 }
 
-static std::vector<std::string>
-    getMCTPServiceConfigPaths(ipmi::Context::ptr& ctx)
+static std::vector<std::string> getMCTPServiceConfigPaths(
+    ipmi::Context::ptr& ctx)
 {
     boost::system::error_code ec;
     auto configPaths = ctx->bus->yield_method_call<std::vector<std::string>>(
