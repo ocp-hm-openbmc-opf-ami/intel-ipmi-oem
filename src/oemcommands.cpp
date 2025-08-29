@@ -45,6 +45,7 @@
 #include <ipmid/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <oemcommands.hpp>
+#include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/bus.hpp>
 #include <sdbusplus/message/types.hpp>
@@ -7384,6 +7385,80 @@ ipmi::RspType<uint8_t> ipmiOEMSetExtlogConfigs(
     return ipmi::responseSuccess();
 }
 
+ipmi::RspType<> ipmiOEMSetHealthStatus(
+    ipmi::Context::ptr& ctx, [[maybe_unused]] uint8_t dbNumber,
+    uint8_t resource, uint8_t health, message::Payload& req)
+{
+    ipmi::ChannelInfo chInfo;
+    try
+    {
+        getChannelInfo(ctx->channel, chInfo);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ipmiOEMSetHealthStatus: Failed to get Channel Info",
+            phosphor::logging::entry("MSG: %s", e.description()));
+        return ipmi::responseUnspecifiedError();
+    }
+    if (chInfo.mediumType !=
+        static_cast<uint8_t>(ipmi::EChannelMediumType::systemInterface))
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "ipmiOEMSetHealthStatus: Error - supported only in "
+            "System(SMS) interface");
+        return ipmi::responseInsufficientPrivilege();
+    }
+
+    std::string inventoryPath =
+        "/xyz/openbmc_project/inventory/system/chassis/";
+
+    std::vector<char> reqData;
+    if (req.unpack(reqData) != 0)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+
+    std::string devInstance(reqData.begin(), reqData.end());
+    auto healthItr = healthmap.find(health);
+    if (healthItr == healthmap.end())
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    std::string healthString = healthItr->second;
+
+    switch (resourceTypes(resource))
+    {
+        case resourceTypes::processor:
+        case resourceTypes::memory:
+            inventoryPath += "motherboard/" + devInstance;
+            break;
+        case resourceTypes::pcieDevice:
+            inventoryPath += "pciedevice/" + devInstance;
+            break;
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    try
+    {
+        ipmi::setDbusProperty(*busp, "xyz.openbmc_project.OOBInventoryConfig",
+                              inventoryPath.c_str(), healthStatusInterface,
+                              "Health", healthString.c_str());
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        lg2::error("Failed to update {RESOURCE}  Health Status", "RESOURCE",
+                   devInstance.c_str());
+        return ipmi::responseUnspecifiedError();
+    }
+    lg2::info("Updated {RESOURCE} Health Status", "RESOURCE",
+              devInstance.c_str());
+
+    return ipmi::responseSuccess();
+}
+
 ipmi::RspType<bool, uint7_t, uint8_t, uint8_t> ipmiOEMGetExtlogConfigs()
 {
     bool ExtlogStatus = false;
@@ -7798,6 +7873,11 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMGetExtlogConfigs, Privilege::User,
                     ipmiOEMGetExtlogConfigs);
+
+    // <Set Health Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMSetHealthStatus, Privilege::User,
+                    ipmiOEMSetHealthStatus);
 }
 
 } // namespace ipmi
