@@ -98,12 +98,20 @@ static constexpr int GENERAL_ERROR = -1;
 
 static boost::container::flat_map<std::string, ManagedObjectType> SensorCache;
 
-constexpr static std::array<std::pair<const char*, SensorUnits>, 5> sensorUnits{
-    {{"temperature", SensorUnits::degreesC},
-     {"voltage", SensorUnits::volts},
-     {"current", SensorUnits::amps},
-     {"fan_tach", SensorUnits::rpm},
-     {"power", SensorUnits::watts}}};
+constexpr static std::array<std::pair<const char*, SensorUnits>, 12>
+    sensorUnits{
+        {{"temperature", SensorUnits::degreesC},
+         {"voltage", SensorUnits::volts},
+         {"current", SensorUnits::amps},
+         {"fan_tach", SensorUnits::rpm},
+         {"pressurekpa", SensorUnits::kpa},
+         {"airflow", SensorUnits::cfm},
+         {"pwm", SensorUnits::unspecified},
+         {"humidity", SensorUnits::unspecified},
+         {"utilization", SensorUnits::unspecified},
+         {"hours", SensorUnits::hour},
+         {"flowrate", SensorUnits::liters},
+         {"power", SensorUnits::watts}}};
 
 void registerSensorFunctions() __attribute__((constructor));
 ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
@@ -504,6 +512,10 @@ bool constructDiscreteSdr(
     record.key.owner_lun = lun;
     record.key.sensor_number = sensorNumber;
     record.body.sensor_type = getSensorTypeFromPath(path);
+#ifdef FEATURE_APISENSOR_SUPPORT
+    record.body.sensor_initialization = 0x23; // init events
+    record.body.sensor_capabilities = 0x40;   // auto rearm
+#endif
 
     record.body.event_reading_type = getSensorEventTypeFromPath(path);
     SensorMap sensorMap;
@@ -520,10 +532,29 @@ bool constructDiscreteSdr(
     uint8_t entityId = 0;
     uint8_t entityInstance = 0x01;
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For discrete sensors only, get possible overrides for
+    // supported_assertions, supported_deassertions, and
+    // discrete_reading_setting_mask
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
+        record.body.sensor_capabilities, record.body.sensor_initialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        record.body.supported_assertions[0],
+        record.body.supported_assertions[1],
+        record.body.supported_deassertions[0],
+        record.body.supported_deassertions[1],
+        record.body.discrete_reading_setting_mask[0],
+        record.body.discrete_reading_setting_mask[1]);
+#else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap, entityId,
                               entityInstance);
+#endif
 
     record.body.entity_id = entityId;
     record.body.entity_instance = entityInstance;
@@ -575,6 +606,22 @@ bool constructEventSdr(
 
     SensorMap sensorMap;
 
+    // Sensor type is hardcoded as a module/board type instead of parsing from
+    // sensor path.
+    static constexpr const uint8_t module_board_type = 0x15;
+    record.body.sensor_type = module_board_type;
+    record.body.event_reading_type = 0x00;
+
+    record.body.sensor_record_sharing_1 = 0x00;
+    record.body.sensor_record_sharing_2 = 0x00;
+
+    uint8_t sensorCapabilities = 0;
+    uint8_t sensorInitialization = 0;
+
+    uint8_t supported_assertions[2] = {0, 0};
+    uint8_t supported_deassertions[2] = {0, 0};
+    uint8_t discrete_reading_setting_mask[2] = {0, 0};
+
     if (!getSensorMap(ctx->yield, service, path, sensorMap,
                       sensorMapSdrUpdatePeriod))
     {
@@ -584,20 +631,29 @@ bool constructEventSdr(
             phosphor::logging::entry("PATH=%s", path.c_str()));
         return false;
     }
+
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For discrete sensors only, get possible overrides for
+    // supported_assertions, supported_deassertions, and
+    // discrete_reading_setting_mask
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, record.body.entity_id,
+        record.body.entity_instance, sensorCapabilities, sensorInitialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        supported_assertions[0], supported_assertions[1],
+        supported_deassertions[0], supported_deassertions[1],
+        discrete_reading_setting_mask[0], discrete_reading_setting_mask[1]);
+#else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap,
                               record.body.entity_id,
                               record.body.entity_instance);
 
-    // Sensor type is hardcoded as a module/board type instead of parsing from
-    // sensor path.
-    static constexpr const uint8_t module_board_type = 0x15;
-    record.body.sensor_type = module_board_type;
-    record.body.event_reading_type = 0x00;
-
-    record.body.sensor_record_sharing_1 = 0x00;
-    record.body.sensor_record_sharing_2 = 0x00;
+#endif
 
     std::string name;
     size_t nameStart = path.rfind("/");
@@ -610,7 +666,8 @@ bool constructEventSdr(
     record.body.id_string_info = name.size();
 
     std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string));
+                 sizeof(record.body.id_string) - 1);
+    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -2000,6 +2057,23 @@ bool constructSensorSdr(
         if (type == unitsType)
         {
             record.body.sensor_units_2_base = static_cast<uint8_t>(units);
+#ifdef FEATURE_APISENSOR_SUPPORT
+            // Special case for flowrate
+            if (type == "flowrate")
+            {
+                record.body.sensor_units_1 =
+                    0x22; // Rate = per minute, base/modifier
+                record.body.sensor_units_3_modifier =
+                    static_cast<uint8_t>(SensorUnits::min); // minute
+            }
+            // Special case for pwm, utilizaiton, and humidity
+            if (type == "pwm" || type == "utilization" || type == "humidity")
+            {
+                record.body.sensor_units_1 = 0x1; // Percentage = Yes
+                record.body.sensor_units_2_base =
+                    static_cast<uint8_t>(SensorUnits::unspecified);
+            }
+#endif
         }
     }
 
@@ -2015,10 +2089,29 @@ bool constructSensorSdr(
     uint8_t entityId = 0;
     uint8_t entityInstance = 0x01;
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For threshold sensors, supported_assertions, supported_deassertions,
+    // and discrete_reading_setting_mask are ignored by this function (not
+    // updated).
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
+        record.body.sensor_capabilities, record.body.sensor_initialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        record.body.supported_assertions[0],
+        record.body.supported_assertions[1],
+        record.body.supported_deassertions[0],
+        record.body.supported_deassertions[1],
+        record.body.discrete_reading_setting_mask[0],
+        record.body.discrete_reading_setting_mask[1]);
+#else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap, entityId,
                               entityInstance);
+#endif
 
     record.body.entity_id = entityId;
     record.body.entity_instance = entityInstance;
@@ -2084,7 +2177,11 @@ bool constructSensorSdr(
         (rExpSign << 7) | (rExpBits << 4) | (bExpSign << 3) | bExpBits;
 
     // Set the analog reading byte interpretation accordingly
+#ifdef FEATURE_APISENSOR_SUPPORT
+    record.body.sensor_units_1 |= (bSigned ? 1 : 0) << 7;
+#else
     record.body.sensor_units_1 = (bSigned ? 1 : 0) << 7;
+#endif
 
     // TODO(): Perhaps care about Tolerance, Accuracy, and so on
     // These seem redundant, but derivable from the above 5 attributes

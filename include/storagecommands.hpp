@@ -143,7 +143,17 @@ enum class SensorUnits : uint8_t
     volts = 0x4,
     amps = 0x5,
     watts = 0x6,
+    joules = 0x7,
+    kpa = 0xe,
+    psi = 0xf,
+    cfm = 0x11,
     rpm = 0x12,
+    hz = 0x13,
+    min = 0x17,
+    hour = 0x18,
+    day = 0x19,
+    liters = 0x25
+
 };
 
 #pragma pack(push, 1)
