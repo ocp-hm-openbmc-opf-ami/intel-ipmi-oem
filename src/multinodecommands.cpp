@@ -28,6 +28,8 @@ namespace ipmi
 {
 void registerMultiNodeFunctions() __attribute__((constructor));
 
+constexpr bool debug = false;
+
 std::optional<uint8_t> getMultiNodeInfo(std::string name)
 {
     auto pdbus = getSdBus();
@@ -121,8 +123,11 @@ ipmi::RspType<uint8_t> ipmiGetMultiNodeRole()
 
 void registerMultiNodeFunctions(void)
 {
-    phosphor::logging::log<phosphor::logging::level::INFO>(
-        "Registering MultiNode commands");
+    if constexpr (debug)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Registering MultiNode commands");
+    }
 
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::intel::netFnGeneral,
                           ipmi::intel::general::cmdGetMultiNodePresence,

@@ -86,6 +86,8 @@ class AllowlistFilter
         "/xyz/openbmc_project/state/host0";
 };
 
+constexpr bool debug = false;
+
 static inline uint8_t getSMMChannel()
 {
     ipmi::ChannelInfo chInfo;
@@ -101,8 +103,11 @@ static inline uint8_t getSMMChannel()
                 ipmi::EChannelMediumType::systemInterface &&
             channel != ipmi::channelSystemIface)
         {
-            log<level::INFO>("SMM channel number",
-                             entry("CHANNEL=%d", channel));
+            if constexpr (debug)
+            {
+                log<level::INFO>("SMM channel number",
+                                 entry("CHANNEL=%d", channel));
+            }
             return channel;
         }
     }
@@ -113,8 +118,10 @@ static inline uint8_t getSMMChannel()
 AllowlistFilter::AllowlistFilter()
 {
     bus = getSdBus();
-
-    log<level::INFO>("Loading Allowlist filter");
+    if constexpr (debug)
+    {
+        log<level::INFO>("Loading Allowlist filter");
+    }
 
     ipmi::registerFilter(ipmi::prioOpenBmcBase,
                          [this](ipmi::message::Request::ptr request) {
@@ -137,8 +144,12 @@ void AllowlistFilter::cacheRestrictedAndPostCompleteMode()
                                   restrictionModeIntf, "RestrictionMode");
         auto& mode = std::get<std::string>(v);
         restrictionMode = RestrictionMode::convertModesFromString(mode);
-        log<level::INFO>("Read restriction mode",
-                         entry("VALUE=%d", static_cast<int>(restrictionMode)));
+        if constexpr (debug)
+        {
+            log<level::INFO>(
+                "Read restriction mode",
+                entry("VALUE=%d", static_cast<int>(restrictionMode)));
+        }
     }
     catch (const std::exception&)
     {
@@ -156,8 +167,11 @@ void AllowlistFilter::cacheRestrictedAndPostCompleteMode()
                                   systemOsStatusIntf, "OperatingSystemState");
         auto& value = std::get<std::string>(v);
         updatePostComplete(value);
-        log<level::INFO>("Read POST complete value",
-                         entry("VALUE=%d", postCompleted));
+        if constexpr (debug)
+        {
+            log<level::INFO>("Read POST complete value",
+                             entry("VALUE=%d", postCompleted));
+        }
     }
     catch (const std::exception&)
     {
@@ -169,8 +183,11 @@ void AllowlistFilter::cacheRestrictedAndPostCompleteMode()
 void AllowlistFilter::updateRestrictionMode(const std::string& value)
 {
     restrictionMode = RestrictionMode::convertModesFromString(value);
-    log<level::INFO>("Updated restriction mode",
-                     entry("VALUE=%d", static_cast<int>(restrictionMode)));
+    if constexpr (debug)
+    {
+        log<level::INFO>("Updated restriction mode",
+                         entry("VALUE=%d", static_cast<int>(restrictionMode)));
+    }
 }
 
 void AllowlistFilter::handleRestrictedModeChange(sdbusplus::message_t& m)
@@ -284,8 +301,12 @@ void AllowlistFilter::cacheCoreBiosDone()
                 return;
             }
             coreBIOSDone = std::get<bool>(v);
-            log<level::INFO>("Read CoreBiosDone",
-                             entry("VALUE=%d", static_cast<int>(coreBIOSDone)));
+            if constexpr (debug)
+            {
+                log<level::INFO>(
+                    "Read CoreBiosDone",
+                    entry("VALUE=%d", static_cast<int>(coreBIOSDone)));
+            }
         },
         coreBiosDoneService, coreBiosDonePath,
         "org.freedesktop.DBus.Properties", "Get", hostMiscIntf, "CoreBiosDone");
@@ -329,8 +350,11 @@ void AllowlistFilter::handleCoreBiosDoneChange(sdbusplus::message_t& msg)
             return;
         }
         coreBIOSDone = std::get<bool>(itr->second);
-        log<level::INFO>(coreBIOSDone ? "coreBIOSDone asserted"
-                                      : "coreBIOSDone not asserted");
+        if constexpr (debug)
+        {
+            log<level::INFO>(coreBIOSDone ? "coreBIOSDone asserted"
+                                          : "coreBIOSDone not asserted");
+        }
     }
 }
 
@@ -402,14 +426,14 @@ ipmi::Cc AllowlistFilter::filterMessage(ipmi::message::Request::ptr request)
         allowlist.cbegin(), allowlist.cend(),
         std::make_tuple(request->ctx->netFn, request->ctx->cmd, channelMask),
         [](const netfncmd_tuple& first, const netfncmd_tuple& value) {
-        return (std::get<2>(first) & std::get<2>(value))
-                   ? first < std::make_tuple(std::get<0>(value),
-                                             std::get<1>(value),
-                                             std::get<2>(first))
-                   : first < value;
-    });
-    //get the systemlock property value, 
-    //if  SystemLock is enabled (true) restrict all set commands to execute
+            return (std::get<2>(first) & std::get<2>(value))
+                       ? first < std::make_tuple(std::get<0>(value),
+                                                 std::get<1>(value),
+                                                 std::get<2>(first))
+                       : first < value;
+        });
+    // get the systemlock property value,
+    // if  SystemLock is enabled (true) restrict all set commands to execute
     if (getDbusSysLockProperty())
     {
         return filterSetCmdMessage(request);

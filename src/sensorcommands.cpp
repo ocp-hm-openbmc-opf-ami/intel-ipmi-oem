@@ -82,6 +82,8 @@ static uint32_t sdrLastRemove = noTimestamp;
 static uint32_t sdrLastUpdate = noTimestamp;
 static constexpr size_t lastRecordIndex = 0xFFFF;
 
+constexpr bool debug = false;
+
 // The IPMI spec defines four Logical Units (LUN), each capable of supporting
 // 255 sensors. The 256 values assigned to LUN 2 are special and are not used
 // for general purpose sensors. Each LUN reserves location 0xFF. The maximum
@@ -104,31 +106,6 @@ constexpr static std::array<std::pair<const char*, SensorUnits>, 5> sensorUnits{
      {"power", SensorUnits::watts}}};
 
 void registerSensorFunctions() __attribute__((constructor));
-
-static sdbusplus::bus::match_t sensorAdded(
-    *getSdBus(),
-    "type='signal',member='InterfacesAdded',arg0path='/xyz/openbmc_project/"
-    "sensors/'",
-    [](sdbusplus::message_t&) {
-        getSensorTree().clear();
-        getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
-        sdrLastAdd = std::chrono::duration_cast<std::chrono::seconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count();
-    });
-
-static sdbusplus::bus::match_t sensorRemoved(
-    *getSdBus(),
-    "type='signal',member='InterfacesRemoved',arg0path='/xyz/openbmc_project/"
-    "sensors/'",
-    [](sdbusplus::message_t&) {
-        getSensorTree().clear();
-        getIpmiDecoratorPaths(/*ctx=*/std::nullopt).reset();
-        sdrLastRemove = std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
-    });
-
 ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
                                std::string& connection, std::string& path,
                                std::vector<std::string>* interfaces)
@@ -219,15 +196,21 @@ static sdbusplus::bus::match_t thresholdChanged(
             auto ptr = std::get_if<bool>(&(findAssert->second));
             if (ptr == nullptr)
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "thresholdChanged: Assert non bool");
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "thresholdChanged: Assert non bool");
+                }
                 return;
             }
             if (*ptr)
             {
-                phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "thresholdChanged: Assert",
-                    phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::INFO>(
+                        "thresholdChanged: Assert",
+                        phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                }
                 thresholdDeassertMap[m.get_path()][findAssert->first] = *ptr;
             }
             else
@@ -236,9 +219,13 @@ static sdbusplus::bus::match_t thresholdChanged(
                     thresholdDeassertMap[m.get_path()][findAssert->first];
                 if (value)
                 {
-                    phosphor::logging::log<phosphor::logging::level::INFO>(
-                        "thresholdChanged: deassert",
-                        phosphor::logging::entry("SENSOR=%s", m.get_path()));
+                    if constexpr (debug)
+                    {
+                        phosphor::logging::log<phosphor::logging::level::INFO>(
+                            "thresholdChanged: deassert",
+                            phosphor::logging::entry("SENSOR=%s",
+                                                     m.get_path()));
+                    }
                     value = *ptr;
                 }
             }
@@ -545,9 +532,14 @@ bool constructDiscreteSdr(
         name = path.substr(nameStart + 1, std::string::npos - nameStart);
     }
     std::replace(name.begin(), name.end(), '_', ' ');
-    record.body.id_string_info = name.size();
-    std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string));
+    constexpr size_t maxLen = sizeof(record.body.id_string);
+
+    // Clamp size to fit within id_string and uint8_t
+    uint8_t safeSize = static_cast<uint8_t>(std::min(name.size(), maxLen - 1));
+
+    std::strncpy(record.body.id_string, name.c_str(), safeSize);
+    record.body.id_string[safeSize] = '\0'; // null-terminate manually
+
     details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
 }
@@ -1918,9 +1910,12 @@ bool constructSensorSdr(
     if (!getSensorMap(ctx->yield, service, path, sensorMap,
                       sensorMapSdrUpdatePeriod))
     {
-        lg2::error("Failed to update sensor map for threshold sensor, "
-                   "service: {SERVICE}, path: {PATH}",
-                   "SERVICE", service, "PATH", path);
+        if constexpr (debug)
+        {
+            lg2::error("Failed to update sensor map for threshold sensor, "
+                       "service: {SERVICE}, path: {PATH}",
+                       "SERVICE", service, "PATH", path);
+        }
         return false;
     }
     record.body.sensor_capabilities = 0x68; // auto rearm - todo hysteresis
@@ -2045,8 +2040,10 @@ bool constructSensorSdr(
     }
     get_sdr::body::set_id_strlen(name.size(), &record.body);
     get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
-    std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string));
+
+    constexpr size_t maxLen = sizeof(record.body.id_string);
+    std::strncpy(record.body.id_string, name.c_str(), maxLen - 1);
+    record.body.id_string[maxLen - 1] = '\0'; // Ensure null-termination
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -2191,8 +2188,11 @@ static int getSensorDataRecord(
 
     if (status)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: getSensorConnection error");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: getSensorConnection error");
+        }
         return GENERAL_ERROR;
     }
     uint16_t sensorNum = getSensorNumberFromPath(path);
@@ -2201,8 +2201,11 @@ static int getSensorDataRecord(
     if (((sensorNum > lun1MaxSensorNum) && (sensorNum <= maxIPMISensors)) ||
         (sensorNum > lun3MaxSensorNum))
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: invalidSensorNumber");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: invalidSensorNumber");
+        }
         return GENERAL_ERROR;
     }
     uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
@@ -2211,8 +2214,11 @@ static int getSensorDataRecord(
     if ((sensornumber != static_cast<uint8_t>(sensNumFromRecID)) &&
         (lun != ctx->lun))
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "getSensorDataRecord: sensor record mismatch");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "getSensorDataRecord: sensor record mismatch");
+        }
         return GENERAL_ERROR;
     }
     // Construct full record (SDR type 1) for the threshold sensors
@@ -2334,15 +2340,15 @@ static ipmi::RspType<uint8_t, // respcount
         // error
         throw std::out_of_range("Maximum number of IPMI sensors exceeded.");
     }
-
     return ipmi::responseSuccess(sdrCount, lunsAndDynamicPopulation,
                                  sdrLastAdd);
 }
-ipmi::RspType<uint8_t, // Action Supported
-              uint8_t,
-              uint8_t  // No of Event Filtering Table Entries
-              >
-    ipmiSenGetPefCapabilities()
+
+/*
+<uint8_t, uint8_t, uint8_t> <Action Supported, ,No of Event
+Filtering-Table-Entries>
+*/
+ipmi::RspType<uint8_t, uint8_t, uint8_t> ipmiSenGetPefCapabilities()
 {
     uint8_t pefVersion = 0;
     uint8_t pefactionSupported = 0;
@@ -3179,15 +3185,21 @@ ipmi::RspType<uint16_t,            // next record ID
     // record
     if ((sdrReservationID == 0 || reservationID != sdrReservationID) && offset)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: responseInvalidReservationId");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: responseInvalidReservationId");
+        }
         return ipmi::responseInvalidReservationId();
     }
     auto& sensorTree = getSensorTree();
     if (!getSensorSubtree(sensorTree) && sensorTree.empty())
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: getSensorSubtree error");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: getSensorSubtree error");
+        }
         return response(ccSensorInvalid);
     }
     auto& ipmiDecoratorPaths = getIpmiDecoratorPaths(ctx);
@@ -3199,7 +3211,10 @@ ipmi::RspType<uint16_t,            // next record ID
 
     if (nextRecordId < 0)
     {
-        lg2::error("ipmiStorageGetSDR: fail to get SDR");
+        if constexpr (debug)
+        {
+            lg2::error("ipmiStorageGetSDR: fail to get SDR");
+        }
         return ipmi::responseSensorInvalid();
     }
 
@@ -3207,8 +3222,11 @@ ipmi::RspType<uint16_t,            // next record ID
         reinterpret_cast<get_sdr::SensorDataRecordHeader*>(record.data());
     if (!hdr)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: record header is null");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: record header is null");
+        }
         return ipmi::responseSuccess(nextRecordId, record);
     }
 
@@ -3217,8 +3235,11 @@ ipmi::RspType<uint16_t,            // next record ID
 
     if (offset >= sdrLength)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: offset is outside the record");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: offset is outside the record");
+        }
         return ipmi::responseRetBytesUnavailable();
     }
     if (sdrLength < (offset + bytesToRead))
@@ -3229,8 +3250,11 @@ ipmi::RspType<uint16_t,            // next record ID
     uint8_t* respStart = reinterpret_cast<uint8_t*>(hdr) + offset;
     if (!respStart)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "ipmiStorageGetSDR: record is null");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "ipmiStorageGetSDR: record is null");
+        }
         return ipmi::responseSuccess(nextRecordId, record);
     }
     std::vector<uint8_t> recordData(respStart, respStart + bytesToRead);
@@ -3305,8 +3329,8 @@ void registerSensorFunctions()
     // <Arm PEF Postpone Timer>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdArmPefPostponeTimer,
-                          ipmi::Privilege::Operator,
-                          ipmiSenArmPEFpostponeTimer);
+                          ipmi::Privilege::Admin, ipmiSenArmPEFpostponeTimer);
+
     //<Get PEF Configuration Parameter>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdGetPefConfigurationParams,
@@ -3315,7 +3339,7 @@ void registerSensorFunctions()
     //<Set PEF Configuration Parameter>
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdSetPefConfigurationParams,
-                          ipmi::Privilege::Operator, ipmiPefSetConfParamCmd);
+                          ipmi::Privilege::Admin, ipmiPefSetConfParamCmd);
 
     // register all storage commands for both Sensor and Storage command
     // versions

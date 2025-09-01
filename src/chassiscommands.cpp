@@ -54,6 +54,9 @@ const static constexpr char* ledIDBlinkObj =
     "/xyz/openbmc_project/led/groups/enclosure_identify_blink";
 const static constexpr char* ledInterface = "xyz.openbmc_project.Led.Group";
 const static constexpr char* ledProp = "Asserted";
+
+constexpr bool debug = false;
+
 enum class ChassisIDState
 {
     off = 0,
@@ -431,7 +434,7 @@ ipmi::RspType<bool,    // Power is on
               bool,    // last power down caused by a Power overload
               bool,    // last power down caused by a power interlock
               bool,    // last power down caused by power fault
-              bool, // last ‘Power is on’ state was entered via IPMI command
+              bool,    // last ‘Power is on’ state was entered via IPMI command
               uint3_t, // reserved
 
               bool,    // Chassis intrusion active
@@ -664,7 +667,10 @@ ipmi::RspType<> ipmiSetFrontPanelButtonEnables(
 
 static void registerChassisFunctions(void)
 {
-    log<level::INFO>("Registering Chassis commands");
+    if constexpr (debug)
+    {
+        log<level::INFO>("Registering Chassis commands");
+    }
 
     createIdentifyTimer();
 

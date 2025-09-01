@@ -210,6 +210,8 @@ static constexpr const char* chassisStateIntf =
 
 static constexpr uint8_t maxlentimezone = 64;
 
+constexpr bool debug = false;
+
 enum class NmiSource : uint8_t
 {
     none = 0,
@@ -1695,9 +1697,12 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
 
     if (*dataLen == 0)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "CfgHostSerial: invalid input len!",
-            phosphor::logging::entry("LEN=%d", *dataLen));
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "CfgHostSerial: invalid input len!",
+                phosphor::logging::entry("LEN=%d", *dataLen));
+        }
         return IPMI_CC_REQ_DATA_LEN_INVALID;
     }
 
@@ -1707,8 +1712,11 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
         {
             if (*dataLen != 1)
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "CfgHostSerial: invalid input len!");
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "CfgHostSerial: invalid input len!");
+                }
                 *dataLen = 0;
                 return IPMI_CC_REQ_DATA_LEN_INVALID;
             }
@@ -1729,9 +1737,12 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
             c1.wait();
             if (c1.exit_code())
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "CfgHostSerial:: error on execute",
-                    phosphor::logging::entry("EXECUTE=%s", fwSetEnvCmd));
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "CfgHostSerial:: error on execute",
+                        phosphor::logging::entry("EXECUTE=%s", fwSetEnvCmd));
+                }
                 // Using the default value
                 *resp = 0;
             }
@@ -1739,8 +1750,11 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
             {
                 if (data.size() != 1)
                 {
-                    phosphor::logging::log<phosphor::logging::level::ERR>(
-                        "CfgHostSerial:: error on read env");
+                    if constexpr (debug)
+                    {
+                        phosphor::logging::log<phosphor::logging::level::ERR>(
+                            "CfgHostSerial:: error on read env");
+                    }
                     return IPMI_CC_UNSPECIFIED_ERROR;
                 }
                 try
@@ -1775,8 +1789,11 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
         {
             if (*dataLen != sizeof(CfgHostSerialReq))
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "CfgHostSerial: invalid input len!");
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "CfgHostSerial: invalid input len!");
+                }
                 *dataLen = 0;
                 return IPMI_CC_REQ_DATA_LEN_INVALID;
             }
@@ -1785,8 +1802,11 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
 
             if (req->parameter > HostSerialCfgParamMax)
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "CfgHostSerial: invalid input!");
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "CfgHostSerial: invalid input!");
+                }
                 return IPMI_CC_INVALID_FIELD_REQUEST;
             }
 
@@ -1796,16 +1816,22 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
             c1.wait();
             if (c1.exit_code())
             {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "CfgHostSerial:: error on execute",
-                    phosphor::logging::entry("EXECUTE=%s", fwGetEnvCmd));
+                if constexpr (debug)
+                {
+                    phosphor::logging::log<phosphor::logging::level::ERR>(
+                        "CfgHostSerial:: error on execute",
+                        phosphor::logging::entry("EXECUTE=%s", fwGetEnvCmd));
+                }
                 return IPMI_CC_UNSPECIFIED_ERROR;
             }
             break;
         }
         default:
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "CfgHostSerial: invalid input!");
+            if constexpr (debug)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "CfgHostSerial: invalid input!");
+            }
             *dataLen = 0;
             return IPMI_CC_INVALID_FIELD_REQUEST;
     }
@@ -6196,9 +6222,12 @@ static void setCredentialBootStrap(const uint8_t& disableCredBootStrap)
         ipmi::setDbusProperty(*dbus, biosService, biosConfigMgrPath,
                               biosConfigMgrIface, "CredentialBootstrap",
                               bool(true));
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "ipmiGetBootStrapAccount: Disable CredentialBootstrapping"
-            "property set to true");
+        if constexpr (debug)
+        {
+            phosphor::logging::log<phosphor::logging::level::INFO>(
+                "ipmiGetBootStrapAccount: Disable CredentialBootstrapping"
+                "property set to true");
+        }
     }
     else
     {
@@ -7490,8 +7519,11 @@ ipmi::RspType<bool, uint7_t, uint8_t, uint8_t> ipmiOEMGetExtlogConfigs()
 
 static void registerOEMFunctions(void)
 {
-    phosphor::logging::log<phosphor::logging::level::INFO>(
-        "Registering OEM commands");
+    if constexpr (debug)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Registering OEM commands");
+    }
     registerHandler(prioOemBase, intel::netFnGeneral,
                     intel::general::cmdGetBmcVersionString, Privilege::User,
                     ipmiOEMGetBmcVersionString);
