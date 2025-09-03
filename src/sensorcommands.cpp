@@ -532,13 +532,9 @@ bool constructDiscreteSdr(
         name = path.substr(nameStart + 1, std::string::npos - nameStart);
     }
     std::replace(name.begin(), name.end(), '_', ' ');
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-
-    // Clamp size to fit within id_string and uint8_t
-    uint8_t safeSize = static_cast<uint8_t>(std::min(name.size(), maxLen - 1));
-
-    std::strncpy(record.body.id_string, name.c_str(), safeSize);
-    record.body.id_string[safeSize] = '\0'; // null-terminate manually
+    record.body.id_string_info = name.size();
+    std::strncpy(record.body.id_string, name.c_str(),
+                 sizeof(record.body.id_string));
 
     details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
@@ -2040,10 +2036,8 @@ bool constructSensorSdr(
     }
     get_sdr::body::set_id_strlen(name.size(), &record.body);
     get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
-
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::strncpy(record.body.id_string, name.c_str(), maxLen - 1);
-    record.body.id_string[maxLen - 1] = '\0'; // Ensure null-termination
+    std::strncpy(record.body.id_string, name.c_str(),
+                 sizeof(record.body.id_string));
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
