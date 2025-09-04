@@ -532,13 +532,9 @@ bool constructDiscreteSdr(
         name = path.substr(nameStart + 1, std::string::npos - nameStart);
     }
     std::replace(name.begin(), name.end(), '_', ' ');
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-
-    // Clamp size to fit within id_string and uint8_t
-    uint8_t safeSize = static_cast<uint8_t>(std::min(name.size(), maxLen - 1));
-
-    std::strncpy(record.body.id_string, name.c_str(), safeSize);
-    record.body.id_string[safeSize] = '\0'; // null-terminate manually
+    record.body.id_string_info = name.size();
+    std::strncpy(record.body.id_string, name.c_str(),
+                 sizeof(record.body.id_string));
 
     details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
