@@ -3098,6 +3098,68 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
     return ipmi::responseSuccess();
 }
 
+ipmi::RspType<> ipmiSetLastProcessedEventId(
+    uint8_t setRecIDType, uint8_t recordID_LSB, uint8_t recordID_MSB)
+{
+    uint16_t recordID = static_cast<uint16_t>(recordID_LSB) |
+                        (static_cast<uint16_t>(recordID_MSB) << 8);
+
+    const bool isBMC = (setRecIDType & 0x01);
+    const char* property =
+        isBMC ? "LastBMCProcessedEventID" : "LastSWProcessedEventID";
+
+    try
+    {
+        setDbusProperty(*getSdBus(), pefBus, pefObj, pefConfInfoIntf, property,
+                        recordID);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Set PEF property failed: " << e.what() << std::endl;
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess();
+}
+
+ipmi::RspType<uint32_t, uint16_t, uint16_t, uint16_t>
+    ipmiGetLastProcessedEventId()
+{
+    using ipmi::storage::readLastEntryId;
+    try
+    {
+        auto& bus = *getSdBus();
+
+        uint16_t lastSW = std::get<uint16_t>(getDbusProperty(
+            bus, pefBus, pefObj, pefConfInfoIntf, "LastSWProcessedEventID"));
+        uint16_t lastBMC = std::get<uint16_t>(getDbusProperty(
+            bus, pefBus, pefObj, pefConfInfoIntf, "LastBMCProcessedEventID"));
+
+        uint16_t lastSEL = readLastEntryId();
+        uint32_t lastSelTimestamp;
+        try
+        {
+            std::string objPath =
+                "/xyz/openbmc_project/logging/ipmi/" + std::to_string(lastSEL);
+            lastSelTimestamp =
+                static_cast<uint32_t>(getEntryTimeStamp(objPath).count());
+        }
+        catch (const std::runtime_error& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
+            return ipmi::responseUnspecifiedError();
+        }
+
+        return ipmi::responseSuccess(lastSelTimestamp, lastSEL, lastSW,
+                                     lastBMC);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Get PEF property failed: " << e.what() << std::endl;
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
 /* end sensor commands */
 
 /* storage commands */
@@ -3336,6 +3398,18 @@ void registerSensorFunctions()
     ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
                           ipmi::sensor_event::cmdSetPefConfigurationParams,
                           ipmi::Privilege::Admin, ipmiPefSetConfParamCmd);
+
+    //<Set Last Processed Event ID>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdSetLastProcessedEventId,
+                          ipmi::Privilege::Operator,
+                          ipmiSetLastProcessedEventId);
+
+    //<Get Last Processed Event ID>
+    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
+                          ipmi::sensor_event::cmdGetLastProcessedEventId,
+                          ipmi::Privilege::Operator,
+                          ipmiGetLastProcessedEventId);
 
     // register all storage commands for both Sensor and Storage command
     // versions

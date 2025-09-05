@@ -167,8 +167,8 @@ struct Type12Record
                  uint8_t pwrStateNotification, uint8_t capabilities,
                  uint8_t eid, uint8_t entityInst, uint8_t mfrDefined,
                  const std::string& sensorname) :
-        targetAddress(address),
-        channelNumber(chNumber), powerStateNotification(pwrStateNotification),
+        targetAddress(address), channelNumber(chNumber),
+        powerStateNotification(pwrStateNotification),
         deviceCapabilities(capabilities), reserved{}, entityID(eid),
         entityInstance(entityInst), oem(mfrDefined)
     {
@@ -220,5 +220,7 @@ std::vector<uint8_t> getType8SDRs(
 std::vector<uint8_t> getType12SDRs(uint16_t index, uint16_t recordId);
 std::vector<uint8_t> getNMDiscoverySDR(uint16_t index, uint16_t recordId);
 void initFruConfig();
+uint16_t readLastEntryId();
 } // namespace storage
 } // namespace ipmi
+std::chrono::seconds getEntryTimeStamp(const std::string& objPath);
