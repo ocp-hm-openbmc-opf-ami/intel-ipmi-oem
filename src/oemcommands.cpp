@@ -6496,6 +6496,16 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
             return ipmi::response(ipmi::ipmiCCBootStrappingDisabled);
         }
 
+        // If disableCredBootStrap is not 0xa5, only disable credential
+        // bootstrap
+        if (disableCredBootStrap != 0xa5)
+        {
+            setCredentialBootStrap(disableCredBootStrap);
+            phosphor::logging::log<level::INFO>(
+                "ipmiGetBootStrapAccount: Credential BootStrapping Disabled.");
+            return ipmi::response(ipmi::ipmiCCBootStrappingDisabled);
+        }
+
         struct group* gr = getgrent();
         int num_of_accounts = 0;
         while (gr != nullptr)
