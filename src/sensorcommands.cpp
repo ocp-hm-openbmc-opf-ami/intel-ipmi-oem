@@ -3399,18 +3399,6 @@ void registerSensorFunctions()
                           ipmi::sensor_event::cmdSetPefConfigurationParams,
                           ipmi::Privilege::Admin, ipmiPefSetConfParamCmd);
 
-    //<Set Last Processed Event ID>
-    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
-                          ipmi::sensor_event::cmdSetLastProcessedEventId,
-                          ipmi::Privilege::Operator,
-                          ipmiSetLastProcessedEventId);
-
-    //<Get Last Processed Event ID>
-    ipmi::registerHandler(ipmi::prioOemBase, ipmi::netFnSensor,
-                          ipmi::sensor_event::cmdGetLastProcessedEventId,
-                          ipmi::Privilege::Operator,
-                          ipmiGetLastProcessedEventId);
-
     // register all storage commands for both Sensor and Storage command
     // versions
 
