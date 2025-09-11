@@ -107,6 +107,7 @@ static constexpr const char* redfishHostInterfaceChannel = "usb0";
 
 // User Manager object in dbus
 static constexpr const char* userMgrObjBasePath = "/xyz/openbmc_project/user";
+static constexpr const char* AccountPolicyInterface = "xyz.openbmc_project.User.AccountPolicy";
 static constexpr const char* userMgrInterface =
     "xyz.openbmc_project.User.Manager";
 static constexpr const char* usersInterface =
@@ -115,6 +116,7 @@ static constexpr const char* usersDeleteIface =
     "xyz.openbmc_project.Object.Delete";
 static constexpr const char* createUserMethod = "CreateUser";
 static constexpr const char* deleteUserMethod = "Delete";
+static constexpr const char* ChannelInterfaceMapMethod = "GetChannelInterfaceMap";
 
 // BIOSConfig Manager object in dbus
 static constexpr const char* biosConfigMgrPath =
@@ -6481,6 +6483,35 @@ bool getAlphaNumString(std::string& uniqueStr)
     return true;
 }
 
+std::vector<uint8_t> getAvailableChannels()
+{
+    std::vector<uint8_t> channelMap;
+    try
+    {
+        auto bus = sdbusplus::bus::new_default();
+        auto methodCall = bus.new_method_call(
+            userMgrInterface, userMgrObjBasePath, AccountPolicyInterface,
+            ChannelInterfaceMapMethod);
+
+        auto reply = bus.call(methodCall);
+
+        std::vector<std::pair<uint8_t, std::string>> channelList;
+        reply.read(channelList);
+
+        for (const auto& channel : channelList)
+        {
+            channelMap.push_back(channel.first);
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        lg2::error("unable to get available channels: {ERROR}", "ERROR",
+                   e.what());
+    }
+
+    return channelMap;
+}
+
 ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
     ipmiGetBootStrapAccount(ipmi::Context::ptr ctx,
                             uint8_t disableCredBootStrap)
@@ -6550,15 +6581,19 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
             return ipmi::responseResponseError();
         }
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
-
         std::string service =
             getService(*dbus, userMgrInterface, userMgrObjBasePath);
 
-        // create the new user with only redfish-hostiface group access
+	std::vector<uint8_t> availableChannels = getAvailableChannels();
+        size_t channelCount = availableChannels.size();
+	std::vector<std::string> privileges(channelCount, "priv-admin");
+        std::vector<uint8_t> channelAccess(channelCount, 1);
+
+	// create the new user with only redfish-hostiface group access
         auto method = dbus->new_method_call(service.c_str(), userMgrObjBasePath,
                                             userMgrInterface, createUserMethod);
         method.append(userName, std::vector<std::string>{"redfish-hostiface"},
-                      "priv-admin", true);
+                      privileges,channelAccess, true);
         auto reply = dbus->call(method);
         if (reply.is_method_error())
         {
