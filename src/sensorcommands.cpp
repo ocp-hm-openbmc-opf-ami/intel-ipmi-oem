@@ -238,8 +238,6 @@ static constexpr const char* sensorInterface =
     "xyz.openbmc_project.Sensor.Value";
 static constexpr const char* discreteInterface =
     "xyz.openbmc_project.Sensor.State";
-static constexpr const char* eventOnlyInterface =
-    "xyz.openbmc_project.Sensor.EventOnly";
 
 bool getDiscreteStatus(const SensorMap& sensorMap,
                        [[maybe_unused]] const std::string path,
@@ -536,85 +534,9 @@ bool constructDiscreteSdr(
     std::replace(name.begin(), name.end(), '_', ' ');
     record.body.id_string_info = name.size();
     std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string) - 1);
-    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
-
-    details::sdrStatsTable.updateName(sensorNumber, name);
-    return true;
-}
-
-void constructEventSdrHeaderKey(uint16_t sensorNum, uint16_t recordID,
-                                get_sdr::SensorDataEventRecord& record)
-{
-    uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
-    uint8_t lun = static_cast<uint8_t>(sensorNum >> 8);
-
-    get_sdr::header::set_record_id(
-        recordID, reinterpret_cast<get_sdr::SensorDataRecordHeader*>(&record));
-
-    record.header.sdr_version = ipmiSdrVersion;
-    record.header.record_type = get_sdr::SENSOR_DATA_EVENT_RECORD;
-    record.header.record_length = sizeof(get_sdr::SensorDataEventRecord) -
-                                  sizeof(get_sdr::SensorDataRecordHeader);
-
-    record.key.owner_id = bmcI2CAddr;
-    record.key.owner_lun = lun;
-    record.key.sensor_number = sensornumber;
-
-    record.body.entity_id = 0x00;
-    record.body.entity_instance = 0x01;
-}
-
-bool constructEventSdr(
-    ipmi::Context::ptr ctx, uint16_t sensorNum, uint16_t recordID,
-    const std::string& service, const std::string& path,
-    const std::unordered_set<std::string>& ipmiDecoratorPaths,
-    get_sdr::SensorDataEventRecord& record)
-{
-    constructEventSdrHeaderKey(sensorNum, recordID, record);
-
-    SensorMap sensorMap;
-
-    if (!getSensorMap(ctx->yield, service, path, sensorMap,
-                      sensorMapSdrUpdatePeriod))
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to update sensor map for discrete sensor",
-            phosphor::logging::entry("SERVICE=%s", service.c_str()),
-            phosphor::logging::entry("PATH=%s", path.c_str()));
-        return false;
-    }
-    // follow the association chain to get the parent board's entityid and
-    // entityInstance
-    updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap,
-                              record.body.entity_id,
-                              record.body.entity_instance);
-
-    // Sensor type is hardcoded as a module/board type instead of parsing from
-    // sensor path.
-    static constexpr const uint8_t module_board_type = 0x15;
-    record.body.sensor_type = module_board_type;
-    record.body.event_reading_type = 0x00;
-
-    record.body.sensor_record_sharing_1 = 0x00;
-    record.body.sensor_record_sharing_2 = 0x00;
-
-    std::string name;
-    size_t nameStart = path.rfind("/");
-    if (nameStart != std::string::npos)
-    {
-        name = path.substr(nameStart + 1, std::string::npos - nameStart);
-    }
-    std::replace(name.begin(), name.end(), '_', ' ');
-
-    record.body.id_string_info = name.size();
-
-    std::strncpy(record.body.id_string, name.c_str(),
                  sizeof(record.body.id_string));
 
-    // Remember the sensor name, as determined for this sensor number
-    details::sdrStatsTable.updateName(sensorNum, name);
-
+    details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
 }
 
@@ -2329,28 +2251,6 @@ static int getSensorDataRecord(
         }
         recordData.insert(recordData.end(), (uint8_t*)&record,
                           ((uint8_t*)&record) + sizeof(record));
-    }
-
-    // handle eventy-only sensors
-    if (std::find(interfaces.begin(), interfaces.end(),
-                  sensor::eventOnlyInterface) != interfaces.end())
-    {
-        // Contruct SDR type 3 record
-        get_sdr::SensorDataEventRecord record = {};
-
-        // If the request doesn't read SDR body, construct only header and key
-        // part to avoid additional DBus transaction.
-        if (readBytes <= sizeof(record.header) + sizeof(record.key))
-        {
-            constructEventSdrHeaderKey(sensorNum, recordID, record);
-        }
-        else if (!constructEventSdr(ctx, sensorNum, recordID, connection, path,
-                                    ipmiDecoratorPaths, record))
-        {
-            return GENERAL_ERROR;
-        }
-        recordData.insert(recordData.end(), reinterpret_cast<uint8_t*>(&record),
-                          reinterpret_cast<uint8_t*>(&record) + sizeof(record));
     }
     return nextRecord;
 }
