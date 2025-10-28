@@ -107,7 +107,8 @@ static constexpr const char* redfishHostInterfaceChannel = "usb0";
 
 // User Manager object in dbus
 static constexpr const char* userMgrObjBasePath = "/xyz/openbmc_project/user";
-static constexpr const char* AccountPolicyInterface = "xyz.openbmc_project.User.AccountPolicy";
+static constexpr const char* AccountPolicyInterface =
+    "xyz.openbmc_project.User.AccountPolicy";
 static constexpr const char* userMgrInterface =
     "xyz.openbmc_project.User.Manager";
 static constexpr const char* usersInterface =
@@ -116,7 +117,8 @@ static constexpr const char* usersDeleteIface =
     "xyz.openbmc_project.Object.Delete";
 static constexpr const char* createUserMethod = "CreateUser";
 static constexpr const char* deleteUserMethod = "Delete";
-static constexpr const char* ChannelInterfaceMapMethod = "GetChannelInterfaceMap";
+static constexpr const char* ChannelInterfaceMapMethod =
+    "GetChannelInterfaceMap";
 
 // BIOSConfig Manager object in dbus
 static constexpr const char* biosConfigMgrPath =
@@ -252,6 +254,59 @@ static constexpr const char* dBusPropertyIntf =
     "org.freedesktop.DBus.Properties";
 static constexpr const char* dBusPropertyGetMethod = "Get";
 static constexpr const char* dBusPropertySetMethod = "Set";
+
+constexpr const char* MAPPER_PATH = "/xyz/openbmc_project/object_mapper";
+constexpr const char* MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
+
+constexpr const char* PRESERVE_ROOT =
+    "/xyz/openbmc_project/inventory/system/configuration";
+constexpr const char* PRESERVE_INTERFACE =
+    "xyz.openbmc_project.Configuration.Preserve";
+
+#define MAX_PRESERVE_CONFIGS 18
+
+enum class ConfigName
+{
+    Boot_Override,
+    EXTLOG,
+    IPMI,
+    NETWORK,
+    NTP,
+    SOL,
+    SYSLOG,
+    U_BOOT_ENV,
+    AUTHENTICATION,
+    FRU,
+    KVM,
+    LicenseControl,
+    REDFISH,
+    SDR,
+    SEL,
+    SMTP,
+    SNMP,
+    ServiceManager,
+    Invalid
+};
+
+const std::unordered_map<std::string, ConfigName> configNameMap = {
+    {"Boot_Override", ConfigName::Boot_Override},
+    {"EXTLOG", ConfigName::EXTLOG},
+    {"IPMI", ConfigName::IPMI},
+    {"NETWORK", ConfigName::NETWORK},
+    {"NTP", ConfigName::NTP},
+    {"SOL", ConfigName::SOL},
+    {"SYSLOG", ConfigName::SYSLOG},
+    {"U_BOOT_ENV", ConfigName::U_BOOT_ENV},
+    {"AUTHENTICATION", ConfigName::AUTHENTICATION},
+    {"FRU", ConfigName::FRU},
+    {"KVM", ConfigName::KVM},
+    {"LicenseControl", ConfigName::LicenseControl},
+    {"REDFISH", ConfigName::REDFISH},
+    {"SDR", ConfigName::SDR},
+    {"SEL", ConfigName::SEL},
+    {"SMTP", ConfigName::SMTP},
+    {"SNMP", ConfigName::SNMP},
+    {"ServiceManager", ConfigName::ServiceManager}};
 
 // return code: 0 successful
 int8_t getChassisSerialNumber(sdbusplus::bus_t& bus, std::string& serial)
@@ -6584,16 +6639,16 @@ ipmi::RspType<std::vector<uint8_t>, std::vector<uint8_t>>
         std::string service =
             getService(*dbus, userMgrInterface, userMgrObjBasePath);
 
-	std::vector<uint8_t> availableChannels = getAvailableChannels();
+        std::vector<uint8_t> availableChannels = getAvailableChannels();
         size_t channelCount = availableChannels.size();
-	std::vector<std::string> privileges(channelCount, "priv-admin");
+        std::vector<std::string> privileges(channelCount, "priv-admin");
         std::vector<uint8_t> channelAccess(channelCount, 1);
 
-	// create the new user with only redfish-hostiface group access
+        // create the new user with only redfish-hostiface group access
         auto method = dbus->new_method_call(service.c_str(), userMgrObjBasePath,
                                             userMgrInterface, createUserMethod);
         method.append(userName, std::vector<std::string>{"redfish-hostiface"},
-                      privileges,channelAccess, true);
+                      privileges, channelAccess, true);
         auto reply = dbus->call(method);
         if (reply.is_method_error())
         {
@@ -7562,6 +7617,149 @@ ipmi::RspType<bool, uint7_t, uint8_t, uint8_t> ipmiOEMGetExtlogConfigs()
     return ipmi::responseSuccess(ExtlogStatus, 0, LogLevel, ReqResLogLevel);
 }
 
+ConfigName getConfigName(const std::string& name)
+{
+    auto it = configNameMap.find(name);
+    if (it != configNameMap.end())
+    {
+        return it->second;
+    }
+    return ConfigName::Invalid;
+}
+
+uint32_t getPreserveConfig(sdbusplus::bus::bus& bus)
+{
+    auto call = bus.new_method_call(MAPPER_INTERFACE, MAPPER_PATH,
+                                    MAPPER_INTERFACE, "GetSubTreePaths");
+
+    call.append(PRESERVE_ROOT, 0, std::vector<std::string>{PRESERVE_INTERFACE});
+
+    auto reply = bus.call(call);
+    std::vector<std::string> configPaths;
+    reply.read(configPaths);
+
+    uint32_t configBits = 0;
+
+    for (size_t i = 0; i < configPaths.size() && i < MAX_PRESERVE_CONFIGS; ++i)
+    {
+        const auto& path = configPaths[i];
+
+        // Extract the configuration name from the path
+        size_t lastSlash = path.find_last_of('/');
+        std::string configNameStr = path.substr(lastSlash + 1);
+
+        ConfigName configName = getConfigName(configNameStr);
+
+        if (configName != ConfigName::Invalid)
+        {
+            auto getCall = bus.new_method_call(
+                "xyz.openbmc_project.EntityManager", path.c_str(),
+                dBusPropertyIntf, dBusPropertyGetMethod);
+
+            getCall.append(PRESERVE_INTERFACE, "isEnable");
+
+            auto propReply = bus.call(getCall);
+            std::variant<bool> value;
+            propReply.read(value);
+
+            if (std::get<bool>(value))
+            {
+                configBits |= (1 << static_cast<int>(configName));
+            }
+        }
+        else
+        {
+            std::cout << "Config name " << configNameStr
+                      << " is not valid, skipping." << std::endl;
+        }
+    }
+
+    return configBits;
+}
+
+void setPreserveConfig(sdbusplus::bus::bus& bus, uint32_t preserveBits)
+{
+    auto call = bus.new_method_call(MAPPER_INTERFACE, MAPPER_PATH,
+                                    MAPPER_INTERFACE, "GetSubTreePaths");
+
+    call.append(PRESERVE_ROOT, 0, std::vector<std::string>{PRESERVE_INTERFACE});
+
+    auto reply = bus.call(call);
+    std::vector<std::string> configPaths;
+    reply.read(configPaths);
+
+    for (size_t i = 0; i < configPaths.size() && i < MAX_PRESERVE_CONFIGS; ++i)
+    {
+        const auto& path = configPaths[i];
+
+        // Extract the configuration name from the path
+        size_t lastSlash = path.find_last_of('/');
+        std::string configNameStr = path.substr(lastSlash + 1);
+
+        ConfigName configName = getConfigName(configNameStr);
+
+        if (configName != ConfigName::Invalid)
+        {
+            bool value = (preserveBits >> static_cast<int>(configName)) & 0x1;
+
+            auto setCall = bus.new_method_call(
+                "xyz.openbmc_project.EntityManager", path.c_str(),
+                dBusPropertyIntf, dBusPropertySetMethod);
+
+            setCall.append(PRESERVE_INTERFACE, "isEnable",
+                           std::variant<bool>(value));
+
+            bus.call(setCall);
+        }
+        else
+        {
+            std::cout << "Config name " << configNameStr
+                      << " is not valid, skipping." << std::endl;
+        }
+    }
+}
+
+ipmi::RspType<uint32_t> ipmiOEMGetPreserveConfig()
+{
+    try
+    {
+        auto bus = sdbusplus::bus::new_default();
+        uint32_t preserve = getPreserveConfig(bus);
+        return ipmi::responseSuccess(preserve);
+    }
+    catch (const std::exception& e)
+    {
+        log<level::ERR>("Failed to get preserve config",
+                        entry("ERR=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
+ipmi::RspType<> ipmiOEMSetPreserveConfig(uint32_t preserve)
+{
+    constexpr uint32_t maxMask = (1 << MAX_PRESERVE_CONFIGS) - 1;
+
+    if (preserve & ~maxMask)
+    {
+        log<level::ERR>("Invalid preserve config: exceeds allowed bitmask",
+                        entry("PRESERVE=0x%08X", preserve));
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    try
+    {
+        auto bus = sdbusplus::bus::new_default();
+        setPreserveConfig(bus, preserve);
+        return ipmi::responseSuccess();
+    }
+    catch (const std::exception& e)
+    {
+        log<level::ERR>("Failed to set preserve config",
+                        entry("ERR=%s", e.what()));
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
 static void registerOEMFunctions(void)
 {
     if constexpr (debug)
@@ -7955,6 +8153,15 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMSetHealthStatus, Privilege::User,
                     ipmiOEMSetHealthStatus);
+    // <Set Preserve Configurations>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetPreserveConfig, Privilege::User,
+                    ipmiOEMSetPreserveConfig);
+
+    // <Get Preserve Configurations>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetPreserveConfig, Privilege::User,
+                    ipmiOEMGetPreserveConfig);
 }
 
 } // namespace ipmi

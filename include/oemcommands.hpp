@@ -273,6 +273,9 @@ static constexpr Cmd cmdGetBiosPostCode = 0xD1;
 constexpr auto cmdGetBiosPostCodeToIpmiMaxSize = 945;
 static constexpr Cmd cmdOEMGetTimezone = 0x9E;
 static constexpr Cmd cmdOEMSetTimezone = 0x9F;
+// 0xF1 to 0xFC reserved for IPMI Firmware update
+static constexpr Cmd cmdSetPreserveConfig = 0xF2;
+static constexpr Cmd cmdGetPreserveConfig = 0xF3;
 
 namespace network
 {
