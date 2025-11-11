@@ -64,6 +64,11 @@
 #include <xyz/openbmc_project/USB/status/server.hpp>
 */
 
+#include "storagecommands.hpp"
+
+#include <phosphor-ipmi-host/selutility.hpp>
+#include <sdrutils.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -7760,6 +7765,335 @@ ipmi::RspType<> ipmiOEMSetPreserveConfig(uint32_t preserve)
     }
 }
 
+void AddExtendedlogEntry(uint8_t sensorNumber, uint8_t sensorType,
+                         const std::vector<uint8_t>& extendedData,
+                         std::vector<uint8_t>& selDataRecord,
+                         std::vector<uint8_t>& eventDataRecord)
+{
+    std::string objpath("");
+    uint8_t typeFromPath;
+    try
+    {
+        objpath = getPathFromSensorNumber(sensorNumber, sensorType);
+        typeFromPath = getSensorTypeFromPath(objpath);
+        if (typeFromPath !=
+            sensorType) // if sensorType not matching, we assume sensor not
+                        // available so prioprity is givien to IPMI Type
+        {
+            objpath.clear();
+        }
+    }
+    catch (...)
+    {
+        log<level::ERR>("Failed to get sensor object path");
+    }
+
+    sdbusplus::bus::bus bus(ipmid_get_sd_bus_connection());
+    auto extendedSelData = ipmi::sel::toHexStr(extendedData);
+    std::string service =
+        ipmi::getService(bus, ipmiSELAddInterface, ipmiSELPath);
+    auto addSEL =
+        bus.new_method_call(service.c_str(), ipmiSELPath, ipmiSELAddInterface,
+                            "IpmiSelAddExtended");
+    addSEL.append(objpath.c_str(), selDataRecord, eventDataRecord,
+                  extendedSelData.c_str());
+    bus.call_noreply(addSEL);
+}
+
+uint16_t readLastEntryId()
+{
+    sdbusplus::bus::bus busLog{ipmid_get_sd_bus_connection()};
+    auto methodCall = busLog.new_method_call(
+        "xyz.openbmc_project.Settings", "/xyz/openbmc_project/logging/settings",
+        "org.freedesktop.DBus.Properties", "Get");
+
+    methodCall.append("xyz.openbmc_project.Logging.Settings", "lastEntryId");
+
+    try
+    {
+        auto reply = busLog.call(methodCall);
+
+        std::variant<uint16_t> value;
+        reply.read(value);
+
+        return std::get<uint16_t>(value);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        std::cerr << "Failed to read lastEntryId : ERROR=" << e.what() << "\n";
+        return 0;
+    }
+}
+
+ipmi::RspType<uint16_t> ipmiOemExtendedAddSELEntry(
+    std::array<uint8_t, selDataSize> selData,
+    [[maybe_unused]] std::array<uint8_t, eventDataSize> eventData,
+    const std::vector<uint8_t> extendedData)
+{
+    std::vector<uint8_t> selDataRecord(selData.begin(), selData.end());
+    std::vector<uint8_t> eventDataRecord(eventData.begin(), eventData.end());
+    uint8_t recordType = selDataRecord[2];
+    uint8_t sensorType = selDataRecord[11];
+    uint8_t sensorNumber = selDataRecord[12];
+
+    uint16_t recordId = 0;
+    std::string selPolicy;
+    std::shared_ptr<sdbusplus::asio::connection> busp = getSdBus();
+    ipmi::sel::ObjectPaths entryPaths;
+
+    try
+    {
+        Value variant =
+            ipmi::getDbusProperty(*busp, settingsService, loggingSettingObjPath,
+                                  loggingSettingIntf, "SelPolicy");
+        selPolicy = std::get<std::string>(variant);
+        if (selPolicy == "xyz.openbmc_project.Logging.Settings.Policy.Linear")
+        {
+            auto method =
+                busp->new_method_call(settingsService, loggingSettingObjPath,
+                                      "org.freedesktop.DBus.Properties", "Get");
+
+            method.append(loggingSettingIntf, "InfoFlags");
+
+            auto reply = busp->call(method);
+            std::variant<std::map<std::string, bool>> infoVariant;
+            reply.read(infoVariant);
+
+            const auto& infoFlags =
+                std::get<std::map<std::string, bool>>(infoVariant);
+            auto it = infoFlags.find("ipmi");
+            if (it != infoFlags.end() && it->second)
+            {
+                return ipmi::responseOutOfSpace();
+            }
+        }
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to get SEL Policy information",
+            phosphor::logging::entry("MSG: %s", e.description()));
+        return ipmi::response(ipmi::ccUnspecifiedError);
+    }
+
+    if (extendedData.size() > extendedSelMaxSize)
+    {
+        return ipmi::responseParmOutOfRange();
+    }
+
+    if (extendedData.empty())
+    {
+        return ipmi::responseReqDataLenInvalid();
+    }
+
+    if (recordType != oemRecordType)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    else
+    {
+        try
+        {
+            AddExtendedlogEntry(sensorNumber, sensorType, extendedData,
+                                selDataRecord, eventDataRecord);
+        }
+        catch (const std::exception& e)
+        {
+            log<level::ERR>("Failed to create D-Bus log entry for SEL, ERROR=",
+                            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+
+    try
+    {
+        recordId = readLastEntryId();
+    }
+    catch (const sdbusplus::exception::exception& e)
+    {
+        log<level::ERR>("Failed to get recordId from dbus");
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess(recordId);
+}
+
+std::array<uint8_t, extendedSelMaxSize> convertToHexArray(
+    const std::string& hexString)
+{
+    std::array<uint8_t, extendedSelMaxSize> hexArray = {};
+    std::size_t hexArrayIndex = 0;
+
+    for (std::size_t i = 0;
+         i < hexString.size() && hexArrayIndex < hexArray.size(); i += 2)
+    {
+        std::string byteString = hexString.substr(i, 2);
+        uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
+        hexArray[hexArrayIndex++] = byte;
+    }
+    return hexArray;
+}
+
+ipmi::RspType<uint8_t, std::array<uint8_t, extendedSelMaxSize>>
+    ipmiOemExtendedGetSELEntry(uint16_t recordId)
+{
+    std::array<uint8_t, extendedSelMaxSize> extData = {};
+    std::string recordIdStr = std::to_string(recordId);
+    std::string objectPath = "/xyz/openbmc_project/logging/ipmi/" + recordIdStr;
+    std::string extendedSelPath = "/var/lib/phosphor-logging/ipmi/errors/";
+    if (!fs::exists(extendedSelPath))
+    {
+        extendedSelPath = "/etc/extlog/phosphor-logging/ipmi/errors/";
+    }
+
+    if (fs::exists(extendedSelPath + recordIdStr))
+    {
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+        try
+        {
+            ipmi::Value variant = ipmi::getDbusProperty(
+                *dbus, service, objectPath, interface, "AdditionalData");
+
+            std::vector<std::string> additionalData =
+                std::get<std::vector<std::string>>(variant);
+
+            std::string extSel = "EXTENDED_SEL_DATA=";
+            auto it = std::find_if(additionalData.begin(), additionalData.end(),
+                                   [&extSel](const std::string& str) {
+                                       return str.find(extSel) !=
+                                              std::string::npos;
+                                   });
+            if (it != additionalData.end())
+            {
+                std::string extendedData = *it;
+                std::size_t pos = extendedData.find(extSel);
+                if (pos != std::string::npos)
+                {
+                    extendedData = extendedData.substr(pos + extSel.size());
+                    extData = convertToHexArray(extendedData);
+                }
+                else
+                {
+                    log<level::ERR>("Record not found");
+                    return ipmi::responseSensorInvalid();
+                }
+            }
+            else
+            {
+                log<level::ERR>("Record not found");
+                return ipmi::responseSensorInvalid();
+            }
+        }
+        catch (std::exception& e)
+        {
+            log<level::ERR>("Failed to get AdditionalData",
+                            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    else
+    {
+        log<level::ERR>("Record doesn't exist");
+        return ipmi::responseSensorInvalid();
+    }
+    return ipmi::responseSuccess(extendedSelMaxSize, extData);
+}
+
+std::vector<uint8_t> stringToHexVector(const std::string& hexString)
+{
+    std::vector<uint8_t> hexVec;
+    for (size_t i = 0; i < hexString.length(); i += 2)
+    {
+        std::string byteString = hexString.substr(i, 2);
+        uint8_t byte =
+            static_cast<uint8_t>(std::stoul(byteString, nullptr, 16));
+        hexVec.push_back(byte);
+    }
+    return hexVec;
+}
+
+ipmi::RspType<uint16_t, uint8_t, std::vector<uint8_t>>
+    ipmiOemExtendedGetPartialSELEntry(uint16_t recordId, uint16_t offset,
+                                      uint16_t readLen)
+{
+    std::string recordIdStr = std::to_string(recordId);
+    std::string objectPath = "/xyz/openbmc_project/logging/ipmi/" + recordIdStr;
+    std::string extendedSelPath = "/var/lib/phosphor-logging/ipmi/errors/";
+    if (!fs::exists(extendedSelPath))
+    {
+        extendedSelPath = "/etc/extlog/phosphor-logging/ipmi/errors/";
+    }
+
+    uint8_t progress = 0;
+    std::vector<uint8_t> extData;
+
+    if (offset >= extendedSelMaxSize)
+    {
+        log<level::ERR>("Parameter Out Of Range");
+        return ipmi::responseParmOutOfRange();
+    }
+
+    if (readLen > (extendedSelMaxSize - offset))
+    {
+        log<level::ERR>("Invalid read Length");
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    if (fs::exists(extendedSelPath + recordIdStr))
+    {
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+        try
+        {
+            ipmi::Value variant = ipmi::getDbusProperty(
+                *dbus, service, objectPath, interface, "AdditionalData");
+            std::vector<std::string> additionalData =
+                std::get<std::vector<std::string>>(variant);
+            std::string extSel = "EXTENDED_SEL_DATA=";
+            auto it = std::find_if(additionalData.begin(), additionalData.end(),
+                                   [&extSel](const std::string& str) {
+                                       return str.find(extSel) !=
+                                              std::string::npos;
+                                   });
+            if (it != additionalData.end())
+            {
+                std::string extendedData = *it;
+                std::size_t pos = extendedData.find(extSel);
+                if (pos != std::string::npos)
+                {
+                    extendedData = extendedData.substr(pos + extSel.size());
+                    extData = stringToHexVector(extendedData);
+                    extData.resize(extendedSelMaxSize - 1, 0);
+                }
+                else
+                {
+                    log<level::ERR>("Record not found");
+                    return ipmi::responseSensorInvalid();
+                }
+            }
+            else
+            {
+                log<level::ERR>("Record not found");
+                return ipmi::responseSensorInvalid();
+            }
+        }
+        catch (std::exception& e)
+        {
+            log<level::ERR>("Failed to get AdditionalData",
+                            phosphor::logging::entry("EXCEPTION=%s", e.what()));
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    else
+    {
+        log<level::ERR>("Record not found");
+        return ipmi::responseSensorInvalid();
+    }
+    return ipmi::responseSuccess(
+        extendedSelMaxSize, progress,
+        std::vector<uint8_t>(extData.begin() + offset,
+                             extData.begin() + offset + readLen - 1));
+}
+
 static void registerOEMFunctions(void)
 {
     if constexpr (debug)
@@ -8162,6 +8496,21 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdGetPreserveConfig, Privilege::User,
                     ipmiOEMGetPreserveConfig);
+
+    // <Add Extended SEL data>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMAddExtendedSel, Privilege::Admin,
+                    ipmiOemExtendedAddSELEntry);
+
+    // <Get Extended SEL data>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetExtendedSel, Privilege::Admin,
+                    ipmiOemExtendedGetSELEntry);
+
+    // <Get Pratial Extended SEL data>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetPartialExtendedSel, Privilege::Admin,
+                    ipmiOemExtendedGetPartialSELEntry);
 }
 
 } // namespace ipmi

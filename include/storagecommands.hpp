@@ -57,6 +57,7 @@ constexpr auto deassertEvent = 0x80;
 constexpr auto selDataSize = 3;
 constexpr auto oemCDDataSize = 9;
 constexpr auto oemEFDataSize = 13;
+constexpr auto oemEventRecordTypeCD = 0xDF;
 
 constexpr auto propAdditionalData = "AdditionalData";
 constexpr auto propResolved = "Resolved";

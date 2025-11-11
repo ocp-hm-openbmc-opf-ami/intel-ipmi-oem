@@ -276,6 +276,9 @@ static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 // 0xF1 to 0xFC reserved for IPMI Firmware update
 static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
+static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
+static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
+static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xF1;
 
 namespace network
 {
@@ -472,6 +475,13 @@ static constexpr uint8_t rmcpEth1ServiceBitPos = 11;
 static constexpr uint8_t rmcpUsb0ServiceBitPos = 12;
 static constexpr uint8_t kvmServiceBitPos = 13;
 static constexpr uint8_t virtualMediaServiceBitPos = 14;
+static constexpr uint8_t oemRecordType = 0xDF;
+static constexpr uint8_t extendedSelSignature = 0xAA;
+static constexpr uint8_t selDataSize = 13;
+static constexpr const uint8_t extendedSelMaxSize = 128;
+namespace fs = std::filesystem;
+static constexpr const char* service = "xyz.openbmc_project.Logging";
+static constexpr const char* interface = "xyz.openbmc_project.Logging.Entry";
 
 static constexpr uint16_t maxServiceBit = 0x7FFF;
 static constexpr uint16_t maxPortValue = 0xFFFF;
