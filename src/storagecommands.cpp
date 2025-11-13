@@ -2178,6 +2178,96 @@ void initFruConfig()
     }
 }
 
+static const std::unordered_map<int16_t, std::string> etcGmtMap = {
+    {0, "Etc/GMT"},       // UTC
+    {60, "Etc/GMT-1"},    // UTC+1
+    {120, "Etc/GMT-2"},   // UTC+2
+    {180, "Etc/GMT-3"},   // UTC+3
+    {240, "Etc/GMT-4"},   // UTC+4
+    {300, "Etc/GMT-5"},   // UTC+5
+    {360, "Etc/GMT-6"},   // UTC+6
+    {420, "Etc/GMT-7"},   // UTC+7
+    {480, "Etc/GMT-8"},   // UTC+8
+    {540, "Etc/GMT-9"},   // UTC+9
+    {600, "Etc/GMT-10"},  // UTC+10
+    {660, "Etc/GMT-11"},  // UTC+11
+    {720, "Etc/GMT-12"},  // UTC+12
+    {780, "Etc/GMT-13"},  // UTC+13
+    {840, "Etc/GMT-14"},  // UTC+14
+
+    {-60, "Etc/GMT+1"},   // UTC−1
+    {-120, "Etc/GMT+2"},  // UTC−2
+    {-180, "Etc/GMT+3"},  // UTC−3
+    {-240, "Etc/GMT+4"},  // UTC−4
+    {-300, "Etc/GMT+5"},  // UTC−5
+    {-360, "Etc/GMT+6"},  // UTC−6
+    {-420, "Etc/GMT+7"},  // UTC−7
+    {-480, "Etc/GMT+8"},  // UTC−8
+    {-540, "Etc/GMT+9"},  // UTC−9
+    {-600, "Etc/GMT+10"}, // UTC−10
+    {-660, "Etc/GMT+11"}, // UTC−11
+    {-720, "Etc/GMT+12"}  // UTC−12
+};
+
+std::string getTimezoneFromOffset(int16_t offset)
+{
+    auto it = etcGmtMap.find(offset);
+    if (it != etcGmtMap.end())
+    {
+        return it->second;
+    }
+
+    return "Etc/GMT";
+}
+
+ipmi::RspType<> ipmiStorageSetSelTimeUtcOffset(int16_t offset)
+{
+    constexpr int16_t minOffset = -1440;
+    constexpr int16_t maxOffset = 1440;
+    constexpr int16_t unspecifiedOffset = 0x07FF; // 0x07FF
+
+    try
+    {
+        sdbusplus::bus_t bus{ipmid_get_sd_bus_connection()};
+
+        bool ntpEnabled = std::get<bool>(ipmi::getDbusProperty(
+            bus, "org.freedesktop.timedate1", "/org/freedesktop/timedate1",
+            "org.freedesktop.timedate1", "NTP"));
+
+        if (ntpEnabled)
+        {
+            return ipmi::responseCommandNotAvailable();
+        }
+
+        if ((offset < minOffset || offset > maxOffset) &&
+            offset != unspecifiedOffset)
+        {
+            return ipmi::responseParmOutOfRange();
+        }
+
+        auto tzString = getTimezoneFromOffset(offset);
+
+        auto method = bus.new_method_call(
+            "org.freedesktop.timedate1", "/org/freedesktop/timedate1",
+            "org.freedesktop.timedate1", "SetTimezone");
+
+        method.append(tzString, false);
+
+        auto reply = bus.call(method);
+        if (reply.is_method_error())
+        {
+            return ipmi::responseUnspecifiedError();
+        }
+
+        return ipmi::responseSuccess();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to set SEL UTC Offset: " << e.what() << std::endl;
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
 void registerStorageFunctions()
 {
     createTimers();
@@ -2227,6 +2317,12 @@ void registerStorageFunctions()
     ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
                           ipmi::storage::cmdGetSelTime, ipmi::Privilege::User,
                           ipmiStorageGetSELTime);
+
+    // <Set SEL Time UTC Offset>
+    ipmi::registerHandler(ipmi::prioOpenBmcBase, ipmi::netFnStorage,
+                          ipmi::storage::cmdSetSelTimeUtcOffset,
+                          ipmi::Privilege::User,
+                          ipmiStorageSetSelTimeUtcOffset);
 }
 } // namespace storage
 } // namespace ipmi

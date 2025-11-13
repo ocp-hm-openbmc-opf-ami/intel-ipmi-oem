@@ -28,6 +28,7 @@ feature_map = {
   'intel-pfr': '-DINTEL_PFR_ENABLED',
   'bmc-validation-unsecure-feature': '-DBMC_VALIDATION_UNSECURE_FEATURE',
   'using-entity-manager-decorators': '-DUSING_ENTITY_MANAGER_DECORATORS',
+  'apisensor': '-DFEATURE_APISENSOR_SUPPORT'
 }
 
 if get_option('non-intel-platforms').disabled()

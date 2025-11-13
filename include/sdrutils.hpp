@@ -220,6 +220,11 @@ class IPMIStatsTable
 
 // This object is global singleton, used from a variety of places
 inline IPMIStatsTable sdrStatsTable;
+#ifdef FEATURE_APISENSOR_SUPPORT
+inline boost::container::flat_map<std::string, std::pair<uint8_t, uint8_t>>
+    sensorPathToSensorTypeCache;
+#endif
+
 inline static void filterSensors(SensorSubTree& subtree)
 {
     subtree.erase(
@@ -279,8 +284,10 @@ inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
                              "/xyz/openbmc_project/object_mapper",
                              "xyz.openbmc_project.ObjectMapper", "GetSubTree");
     static constexpr const auto depth = 2;
-    static constexpr std::array<const char*, 5> interfaces = {
-        "xyz.openbmc_project.Sensor.Value", "xyz.openbmc_project.Sensor.State",
+    static constexpr std::array<const char*, 6> interfaces = {
+        "xyz.openbmc_project.Sensor.Value",
+        "xyz.openbmc_project.Sensor.State",
+        "xyz.openbmc_project.Sensor.EventOnly",
         "xyz.openbmc_project.Sensor.Threshold.Warning",
         "xyz.openbmc_project.Sensor.Threshold.Critical",
         "xyz.openbmc_project.Sensor.Threshold.NonRecoverable"};
@@ -301,6 +308,11 @@ inline static uint16_t getSensorSubtree(std::shared_ptr<SensorSubTree>& subtree)
     sensorUpdatedIndex++;
     // The SDR is being regenerated, wipe the old stats
     sdrStatsTable.wipeTable();
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // The SDR is being regenerated, clear sensor path/type cache
+    sensorPathToSensorTypeCache.clear();
+#endif
+
     return sensorUpdatedIndex;
 }
 
@@ -443,6 +455,26 @@ const static boost::container::flat_map<
                                   SensorEventTypeCodes::threshold)},
          {"chassisstate", std::make_pair(SensorTypeCodes::powerunit,
                                          SensorEventTypeCodes::digitalState)},
+         {"tach", std::make_pair(SensorTypeCodes::other,
+                                 SensorEventTypeCodes::threshold)},
+         {"pwm", std::make_pair(SensorTypeCodes::other,
+                                SensorEventTypeCodes::threshold)},
+         {"humidity", std::make_pair(SensorTypeCodes::other,
+                                     SensorEventTypeCodes::threshold)},
+         {"utilization", std::make_pair(SensorTypeCodes::other,
+                                        SensorEventTypeCodes::threshold)},
+         {"airflow", std::make_pair(SensorTypeCodes::coolingdevice,
+                                    SensorEventTypeCodes::threshold)},
+         {"flowrate", std::make_pair(SensorTypeCodes::coolingdevice,
+                                     SensorEventTypeCodes::threshold)},
+         {"pressurekpa", std::make_pair(SensorTypeCodes::coolingdevice,
+                                        SensorEventTypeCodes::threshold)},
+         {"discrete", std::make_pair(SensorTypeCodes::other,
+                                     SensorEventTypeCodes::digitalState)},
+         {"hours", std::make_pair(SensorTypeCodes::other,
+                                  SensorEventTypeCodes::threshold)},
+         {"count", std::make_pair(SensorTypeCodes::other,
+                                  SensorEventTypeCodes::threshold)},
          {"bmcfirmwarehealth",
           std::make_pair(SensorTypeCodes::managementsubsystemhealth,
                          SensorEventTypeCodes::sensorSpecified)},
@@ -471,6 +503,15 @@ inline static std::string getSensorTypeStringFromPath(const std::string& path)
 inline static uint8_t getSensorTypeFromPath(const std::string& path)
 {
     uint8_t sensorType = 0;
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // First try to get override value from cache
+    auto findCachedSensor = details::sensorPathToSensorTypeCache.find(path);
+    if (findCachedSensor != details::sensorPathToSensorTypeCache.end())
+    {
+        sensorType = std::get<0>(findCachedSensor->second);
+        return sensorType;
+    }
+#endif
     std::string type = getSensorTypeStringFromPath(path);
     auto findSensor = sensorTypes.find(type.c_str());
     if (findSensor != sensorTypes.end())
@@ -505,6 +546,15 @@ inline static uint16_t getSensorNumberFromPath(const std::string& path)
 inline static uint8_t getSensorEventTypeFromPath(const std::string& path)
 {
     uint8_t sensorEventType = 0;
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // First try to get override value from cache
+    auto findCachedSensor = details::sensorPathToSensorTypeCache.find(path);
+    if (findCachedSensor != details::sensorPathToSensorTypeCache.end())
+    {
+        sensorEventType = std::get<1>(findCachedSensor->second);
+        return sensorEventType;
+    }
+#endif
     std::string type = getSensorTypeStringFromPath(path);
     auto findSensor = sensorTypes.find(type.c_str());
     if (findSensor != sensorTypes.end())
@@ -666,12 +716,28 @@ static inline const std::string* getSensorConfigurationInterface(
     return nullptr;
 }
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+// Follow sensor's 'Associations' property back to the entity-manager
+// configuration dbus object to check for optional overrides of
+// 'SensorTypeCode', 'EventReadingType'. Also for discrete sensors, determine
+// assertion/deassertion/reading masks from the 'State' property (string array).
+static inline void updateExtraIpmiFromAssociation(
+    const std::string& path,
+    [[maybe_unused]] const std::unordered_set<std::string>& ipmiDecoratorPaths,
+    const SensorMap& sensorMap, uint8_t& entityId, uint8_t& entityInstance,
+    uint8_t& sensorCapabilities, uint8_t& sensorInitialization,
+    uint8_t& sensorTypeCode, uint8_t& eventReadingType, uint8_t& assertionMask1,
+    uint8_t& assertionMask2, uint8_t& deassertionMask1,
+    uint8_t& deassertionMask2, uint8_t& discreteReadingMask1,
+    uint8_t& discreteReadingMask2)
+#else
 // Follow Association properties for Sensor back to the Board dbus object to
 // check for an EntityId and EntityInstance property.
 static inline void updateIpmiFromAssociation(
     const std::string& path,
     [[maybe_unused]] const std::unordered_set<std::string>& ipmiDecoratorPaths,
     const SensorMap& sensorMap, uint8_t& entityId, uint8_t& entityInstance)
+#endif
 {
     namespace fs = std::filesystem;
 
@@ -786,16 +852,111 @@ static inline void updateIpmiFromAssociation(
             entityInstance = static_cast<uint8_t>(
                 std::get<uint64_t>(entityInstanceProp->second));
         }
+#ifdef FEATURE_APISENSOR_SUPPORT
+        // Get assertion/deassertion mask for sensors that
+        // have a State property (ie discrete sensors).
+        // Do we have a State property?
+        auto stateProp = configurationProperties.find("State");
+        if (stateProp != configurationProperties.end())
+        {
+            // Yes, we do.  Get the value.
+            std::vector<std::string> stateArray =
+                std::get<std::vector<std::string>>(stateProp->second);
 
+            int stateCount = stateArray.size(); // Get number of states
+
+            // Set assertion/deassertion/reading masks based on number of states
+            uint8_t mask[2] = {0, 0};
+            while (stateCount > 0)
+            {
+                // IPMI defines only 15 discrete states
+                if (stateCount <= 15)
+                {
+                    if (stateCount > 8)
+                    {
+                        mask[1] |= 1 << (stateCount - 8 - 1);
+                    }
+                    if (stateCount <= 8)
+                    {
+                        mask[0] |= 1 << (stateCount - 1);
+                    }
+                }
+                stateCount--;
+            }
+            assertionMask1 = deassertionMask1 = discreteReadingMask1 = mask[0];
+            assertionMask2 = deassertionMask2 = discreteReadingMask2 = mask[1];
+        }
+
+        // Do we have a SensorCapabilities property?
+        auto sensorCapabilitiesProp =
+            configurationProperties.find("SensorCapabilities");
+        if (sensorCapabilitiesProp != configurationProperties.end())
+        {
+            // Yes, we do.  Get the value.
+            sensorCapabilities = static_cast<uint8_t>(
+                std::get<uint64_t>(sensorCapabilitiesProp->second));
+        }
+
+        // Do we have a SensorInitialization property?
+        auto sensorInitializationProp =
+            configurationProperties.find("SensorInitialization");
+        if (sensorInitializationProp != configurationProperties.end())
+        {
+            // Yes, we do.  Get the value.
+            sensorInitialization = static_cast<uint8_t>(
+                std::get<uint64_t>(sensorInitializationProp->second));
+        }
+        // Do we have an EventReadingType property?
+        auto eventReadingTypeProp =
+            configurationProperties.find("EventReadingType");
+        if (eventReadingTypeProp != configurationProperties.end())
+        {
+            // Yes, we do.  Get the value.
+            eventReadingType = static_cast<uint8_t>(
+                std::get<uint64_t>(eventReadingTypeProp->second));
+        }
+
+        // Do we have a SensorTypeCode property?
+        auto sensorTypeCodeProp =
+            configurationProperties.find("SensorTypeCode");
+        if (sensorTypeCodeProp != configurationProperties.end())
+        {
+            // Yes, we do.  Get the value.
+            sensorTypeCode = static_cast<uint8_t>(
+                std::get<uint64_t>(sensorTypeCodeProp->second));
+        }
+#endif
         // stop searching Association records.
         break;
     } // end for Association vectors.
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Save path, sensorTypeCode, and eventReadingType for quick reference later
+    // Specifically for when we create ipmi sel events this is needed to get the
+    // override values for SensorType and EventReadingType.
+    details::sensorPathToSensorTypeCache[path] =
+        std::make_pair(sensorTypeCode, eventReadingType);
+
+    if constexpr (debug)
+    {
+        std::fprintf(
+            stderr,
+            "updateExtraIpmiFromAssociation: path=%s, "
+            "entityId=0x%02x, entityInstance=0x%02x, "
+            "sensorTypeCode=0x%02x, eventReadingType=0x%02x, "
+            "assertionMask=0x%02x%02x, deassertionMask=0x%02x%02x, "
+            "discreteReadingMask=0x%02x%02x\n",
+            path.c_str(), entityId, entityInstance, sensorTypeCode,
+            eventReadingType, assertionMask2, assertionMask1, deassertionMask2,
+            deassertionMask1, discreteReadingMask2, discreteReadingMask1);
+    }
+#else
     if constexpr (debug)
     {
         std::fprintf(stderr, "path=%s, entityId=%d, entityInstance=%d\n",
                      path.c_str(), entityId, entityInstance);
     }
+#endif
 }
 
 // Fetch the ipmiDecoratorPaths to get the list of dbus objects that

@@ -247,6 +247,7 @@ static constexpr NetFn netFnGeneral = netFnOemTwo;
 
 namespace general
 {
+static constexpr Cmd cmdOEMSetHealthStatus = 0x2c;
 static constexpr Cmd cmdOEMSetFirewallConfiguration = 0x76;
 static constexpr Cmd cmdOEMGetFirewallConfiguration = 0x77;
 static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
@@ -272,9 +273,12 @@ static constexpr Cmd cmdGetBiosPostCode = 0xD1;
 constexpr auto cmdGetBiosPostCodeToIpmiMaxSize = 945;
 static constexpr Cmd cmdOEMGetTimezone = 0x9E;
 static constexpr Cmd cmdOEMSetTimezone = 0x9F;
-//0xF1 to 0xFC reserved for IPMI Firmware update
+// 0xF1 to 0xFC reserved for IPMI Firmware update
 static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
+static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
+static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
+static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xF1;
 
 namespace network
 {
@@ -471,6 +475,13 @@ static constexpr uint8_t rmcpEth1ServiceBitPos = 11;
 static constexpr uint8_t rmcpUsb0ServiceBitPos = 12;
 static constexpr uint8_t kvmServiceBitPos = 13;
 static constexpr uint8_t virtualMediaServiceBitPos = 14;
+static constexpr uint8_t oemRecordType = 0xDF;
+static constexpr uint8_t extendedSelSignature = 0xAA;
+static constexpr uint8_t selDataSize = 13;
+static constexpr const uint8_t extendedSelMaxSize = 128;
+namespace fs = std::filesystem;
+static constexpr const char* service = "xyz.openbmc_project.Logging";
+static constexpr const char* interface = "xyz.openbmc_project.Logging.Entry";
 
 static constexpr uint16_t maxServiceBit = 0x7FFF;
 static constexpr uint16_t maxPortValue = 0xFFFF;
@@ -535,6 +546,11 @@ static constexpr const uint8_t readCACertFile = 0x02;
 // SMTP Config parameters:
 static constexpr const uint8_t min_recipient = 0x01;
 static constexpr const uint8_t max_recipient = 0x04;
+
+static constexpr const char* healthStatusInterface =
+    "xyz.openbmc_project.Common.Status";
+const std::map<uint8_t, std::string> healthmap{
+    {0x00, "OK"}, {0x01, "Warning"}, {0x02, "Critical"}};
 
 enum class ServerType
 {
@@ -705,6 +721,13 @@ enum class smtpSetting : uint8_t
     userName = 0x9,
     ipAddv6 = 0x0a,
 
+};
+
+enum class resourceTypes : uint8_t
+{
+    processor = 0x01,
+    memory = 0x02,
+    pcieDevice = 0x03,
 };
 
 // FIXME: this stuff needs to be rewritten

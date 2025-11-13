@@ -98,12 +98,20 @@ static constexpr int GENERAL_ERROR = -1;
 
 static boost::container::flat_map<std::string, ManagedObjectType> SensorCache;
 
-constexpr static std::array<std::pair<const char*, SensorUnits>, 5> sensorUnits{
-    {{"temperature", SensorUnits::degreesC},
-     {"voltage", SensorUnits::volts},
-     {"current", SensorUnits::amps},
-     {"fan_tach", SensorUnits::rpm},
-     {"power", SensorUnits::watts}}};
+constexpr static std::array<std::pair<const char*, SensorUnits>, 12>
+    sensorUnits{
+        {{"temperature", SensorUnits::degreesC},
+         {"voltage", SensorUnits::volts},
+         {"current", SensorUnits::amps},
+         {"fan_tach", SensorUnits::rpm},
+         {"pressurekpa", SensorUnits::kpa},
+         {"airflow", SensorUnits::cfm},
+         {"pwm", SensorUnits::unspecified},
+         {"humidity", SensorUnits::unspecified},
+         {"utilization", SensorUnits::unspecified},
+         {"hours", SensorUnits::hour},
+         {"flowrate", SensorUnits::liters},
+         {"power", SensorUnits::watts}}};
 
 void registerSensorFunctions() __attribute__((constructor));
 ipmi_ret_t getSensorConnection(ipmi::Context::ptr ctx, uint8_t sensnum,
@@ -238,6 +246,8 @@ static constexpr const char* sensorInterface =
     "xyz.openbmc_project.Sensor.Value";
 static constexpr const char* discreteInterface =
     "xyz.openbmc_project.Sensor.State";
+static constexpr const char* eventOnlyInterface =
+    "xyz.openbmc_project.Sensor.EventOnly";
 
 bool getDiscreteStatus(const SensorMap& sensorMap,
                        [[maybe_unused]] const std::string path,
@@ -502,6 +512,10 @@ bool constructDiscreteSdr(
     record.key.owner_lun = lun;
     record.key.sensor_number = sensorNumber;
     record.body.sensor_type = getSensorTypeFromPath(path);
+#ifdef FEATURE_APISENSOR_SUPPORT
+    record.body.sensor_initialization = 0x23; // init events
+    record.body.sensor_capabilities = 0x40;   // auto rearm
+#endif
 
     record.body.event_reading_type = getSensorEventTypeFromPath(path);
     SensorMap sensorMap;
@@ -518,10 +532,29 @@ bool constructDiscreteSdr(
     uint8_t entityId = 0;
     uint8_t entityInstance = 0x01;
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For discrete sensors only, get possible overrides for
+    // supported_assertions, supported_deassertions, and
+    // discrete_reading_setting_mask
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
+        record.body.sensor_capabilities, record.body.sensor_initialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        record.body.supported_assertions[0],
+        record.body.supported_assertions[1],
+        record.body.supported_deassertions[0],
+        record.body.supported_deassertions[1],
+        record.body.discrete_reading_setting_mask[0],
+        record.body.discrete_reading_setting_mask[1]);
+#else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap, entityId,
                               entityInstance);
+#endif
 
     record.body.entity_id = entityId;
     record.body.entity_instance = entityInstance;
@@ -534,9 +567,111 @@ bool constructDiscreteSdr(
     std::replace(name.begin(), name.end(), '_', ' ');
     record.body.id_string_info = name.size();
     std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string));
+                 sizeof(record.body.id_string) - 1);
+    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
 
     details::sdrStatsTable.updateName(sensorNumber, name);
+    return true;
+}
+
+void constructEventSdrHeaderKey(uint16_t sensorNum, uint16_t recordID,
+                                get_sdr::SensorDataEventRecord& record)
+{
+    uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
+    uint8_t lun = static_cast<uint8_t>(sensorNum >> 8);
+
+    get_sdr::header::set_record_id(
+        recordID, reinterpret_cast<get_sdr::SensorDataRecordHeader*>(&record));
+
+    record.header.sdr_version = ipmiSdrVersion;
+    record.header.record_type = get_sdr::SENSOR_DATA_EVENT_RECORD;
+    record.header.record_length = sizeof(get_sdr::SensorDataEventRecord) -
+                                  sizeof(get_sdr::SensorDataRecordHeader);
+
+    record.key.owner_id = bmcI2CAddr;
+    record.key.owner_lun = lun;
+    record.key.sensor_number = sensornumber;
+
+    record.body.entity_id = 0x00;
+    record.body.entity_instance = 0x01;
+}
+
+bool constructEventSdr(
+    ipmi::Context::ptr ctx, uint16_t sensorNum, uint16_t recordID,
+    const std::string& service, const std::string& path,
+    const std::unordered_set<std::string>& ipmiDecoratorPaths,
+    get_sdr::SensorDataEventRecord& record)
+{
+    constructEventSdrHeaderKey(sensorNum, recordID, record);
+
+    SensorMap sensorMap;
+
+    // Sensor type is hardcoded as a module/board type instead of parsing from
+    // sensor path.
+    static constexpr const uint8_t module_board_type = 0x15;
+    record.body.sensor_type = module_board_type;
+    record.body.event_reading_type = 0x00;
+
+    record.body.sensor_record_sharing_1 = 0x00;
+    record.body.sensor_record_sharing_2 = 0x00;
+
+    uint8_t sensorCapabilities = 0;
+    uint8_t sensorInitialization = 0;
+
+    uint8_t supported_assertions[2] = {0, 0};
+    uint8_t supported_deassertions[2] = {0, 0};
+    uint8_t discrete_reading_setting_mask[2] = {0, 0};
+
+    if (!getSensorMap(ctx->yield, service, path, sensorMap,
+                      sensorMapSdrUpdatePeriod))
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>(
+            "Failed to update sensor map for discrete sensor",
+            phosphor::logging::entry("SERVICE=%s", service.c_str()),
+            phosphor::logging::entry("PATH=%s", path.c_str()));
+        return false;
+    }
+
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For discrete sensors only, get possible overrides for
+    // supported_assertions, supported_deassertions, and
+    // discrete_reading_setting_mask
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, record.body.entity_id,
+        record.body.entity_instance, sensorCapabilities, sensorInitialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        supported_assertions[0], supported_assertions[1],
+        supported_deassertions[0], supported_deassertions[1],
+        discrete_reading_setting_mask[0], discrete_reading_setting_mask[1]);
+#else
+    // follow the association chain to get the parent board's entityid and
+    // entityInstance
+    updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap,
+                              record.body.entity_id,
+                              record.body.entity_instance);
+
+#endif
+
+    std::string name;
+    size_t nameStart = path.rfind("/");
+    if (nameStart != std::string::npos)
+    {
+        name = path.substr(nameStart + 1, std::string::npos - nameStart);
+    }
+    std::replace(name.begin(), name.end(), '_', ' ');
+
+    record.body.id_string_info = name.size();
+
+    std::strncpy(record.body.id_string, name.c_str(),
+                 sizeof(record.body.id_string) - 1);
+    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
+
+    // Remember the sensor name, as determined for this sensor number
+    details::sdrStatsTable.updateName(sensorNum, name);
+
     return true;
 }
 
@@ -1922,6 +2057,23 @@ bool constructSensorSdr(
         if (type == unitsType)
         {
             record.body.sensor_units_2_base = static_cast<uint8_t>(units);
+#ifdef FEATURE_APISENSOR_SUPPORT
+            // Special case for flowrate
+            if (type == "flowrate")
+            {
+                record.body.sensor_units_1 =
+                    0x22; // Rate = per minute, base/modifier
+                record.body.sensor_units_3_modifier =
+                    static_cast<uint8_t>(SensorUnits::min); // minute
+            }
+            // Special case for pwm, utilizaiton, and humidity
+            if (type == "pwm" || type == "utilization" || type == "humidity")
+            {
+                record.body.sensor_units_1 = 0x1; // Percentage = Yes
+                record.body.sensor_units_2_base =
+                    static_cast<uint8_t>(SensorUnits::unspecified);
+            }
+#endif
         }
     }
 
@@ -1937,10 +2089,29 @@ bool constructSensorSdr(
     uint8_t entityId = 0;
     uint8_t entityInstance = 0x01;
 
+#ifdef FEATURE_APISENSOR_SUPPORT
+    // Follow the sensor 'Associations' property to get any possible
+    // overrides for sensor_capabilities, sensor_initialization,
+    // sensor_type, and event_reading_type.
+    // For threshold sensors, supported_assertions, supported_deassertions,
+    // and discrete_reading_setting_mask are ignored by this function (not
+    // updated).
+    updateExtraIpmiFromAssociation(
+        path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
+        record.body.sensor_capabilities, record.body.sensor_initialization,
+        record.body.sensor_type, record.body.event_reading_type,
+        record.body.supported_assertions[0],
+        record.body.supported_assertions[1],
+        record.body.supported_deassertions[0],
+        record.body.supported_deassertions[1],
+        record.body.discrete_reading_setting_mask[0],
+        record.body.discrete_reading_setting_mask[1]);
+#else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap, entityId,
                               entityInstance);
+#endif
 
     record.body.entity_id = entityId;
     record.body.entity_instance = entityInstance;
@@ -2006,7 +2177,11 @@ bool constructSensorSdr(
         (rExpSign << 7) | (rExpBits << 4) | (bExpSign << 3) | bExpBits;
 
     // Set the analog reading byte interpretation accordingly
+#ifdef FEATURE_APISENSOR_SUPPORT
+    record.body.sensor_units_1 |= (bSigned ? 1 : 0) << 7;
+#else
     record.body.sensor_units_1 = (bSigned ? 1 : 0) << 7;
+#endif
 
     // TODO(): Perhaps care about Tolerance, Accuracy, and so on
     // These seem redundant, but derivable from the above 5 attributes
@@ -2036,8 +2211,10 @@ bool constructSensorSdr(
     }
     get_sdr::body::set_id_strlen(name.size(), &record.body);
     get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
-    std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string));
+
+    constexpr size_t maxLen = sizeof(record.body.id_string);
+    std::strncpy(record.body.id_string, name.c_str(), maxLen - 1);
+    record.body.id_string[maxLen - 1] = '\0'; // Ensure null-termination
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -2249,6 +2426,28 @@ static int getSensorDataRecord(
         }
         recordData.insert(recordData.end(), (uint8_t*)&record,
                           ((uint8_t*)&record) + sizeof(record));
+    }
+
+    // handle eventy-only sensors
+    if (std::find(interfaces.begin(), interfaces.end(),
+                  sensor::eventOnlyInterface) != interfaces.end())
+    {
+        // Contruct SDR type 3 record
+        get_sdr::SensorDataEventRecord record = {};
+
+        // If the request doesn't read SDR body, construct only header and key
+        // part to avoid additional DBus transaction.
+        if (readBytes <= sizeof(record.header) + sizeof(record.key))
+        {
+            constructEventSdrHeaderKey(sensorNum, recordID, record);
+        }
+        else if (!constructEventSdr(ctx, sensorNum, recordID, connection, path,
+                                    ipmiDecoratorPaths, record))
+        {
+            return GENERAL_ERROR;
+        }
+        recordData.insert(recordData.end(), reinterpret_cast<uint8_t*>(&record),
+                          reinterpret_cast<uint8_t*>(&record) + sizeof(record));
     }
     return nextRecord;
 }
@@ -3094,6 +3293,68 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             return response(ipmiCCParamNotSupported);
     }
     return ipmi::responseSuccess();
+}
+
+ipmi::RspType<> ipmiSetLastProcessedEventId(
+    uint8_t setRecIDType, uint8_t recordID_LSB, uint8_t recordID_MSB)
+{
+    uint16_t recordID = static_cast<uint16_t>(recordID_LSB) |
+                        (static_cast<uint16_t>(recordID_MSB) << 8);
+
+    const bool isBMC = (setRecIDType & 0x01);
+    const char* property =
+        isBMC ? "LastBMCProcessedEventID" : "LastSWProcessedEventID";
+
+    try
+    {
+        setDbusProperty(*getSdBus(), pefBus, pefObj, pefConfInfoIntf, property,
+                        recordID);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Set PEF property failed: " << e.what() << std::endl;
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess();
+}
+
+ipmi::RspType<uint32_t, uint16_t, uint16_t, uint16_t>
+    ipmiGetLastProcessedEventId()
+{
+    using ipmi::storage::readLastEntryId;
+    try
+    {
+        auto& bus = *getSdBus();
+
+        uint16_t lastSW = std::get<uint16_t>(getDbusProperty(
+            bus, pefBus, pefObj, pefConfInfoIntf, "LastSWProcessedEventID"));
+        uint16_t lastBMC = std::get<uint16_t>(getDbusProperty(
+            bus, pefBus, pefObj, pefConfInfoIntf, "LastBMCProcessedEventID"));
+
+        uint16_t lastSEL = readLastEntryId();
+        uint32_t lastSelTimestamp;
+        try
+        {
+            std::string objPath =
+                "/xyz/openbmc_project/logging/ipmi/" + std::to_string(lastSEL);
+            lastSelTimestamp =
+                static_cast<uint32_t>(getEntryTimeStamp(objPath).count());
+        }
+        catch (const std::runtime_error& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
+            return ipmi::responseUnspecifiedError();
+        }
+
+        return ipmi::responseSuccess(lastSelTimestamp, lastSEL, lastSW,
+                                     lastBMC);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Get PEF property failed: " << e.what() << std::endl;
+        return ipmi::responseUnspecifiedError();
+    }
 }
 
 /* end sensor commands */
