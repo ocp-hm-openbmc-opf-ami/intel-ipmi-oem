@@ -188,8 +188,8 @@ const static constexpr char* settingsObjPath =
     "/xyz/openbmc_project/logging/settings";
 const static constexpr char* settingsUSBIntf = "xyz.openbmc_project.USB";
 
-const static constexpr char* snmpService = "xyz.openbmc_project.Snmp";
-const static constexpr char* snmpObjPath = "/xyz/openbmc_project/Snmp";
+const static constexpr char* snmpService = "xyz.openbmc_project.Snmp.Conf";
+const static constexpr char* snmpObjPath = "/xyz/openbmc_project/snmp/SnmpUtils";
 const static constexpr char* snmpUtilsIntf =
     "xyz.openbmc_project.Snmp.SnmpUtils";
 // Task
