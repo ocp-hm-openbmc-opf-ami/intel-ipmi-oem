@@ -7878,7 +7878,7 @@ ipmi::RspType<uint16_t> ipmiOemExtendedAddSELEntry(
 
     if (extendedData.size() > extendedSelMaxSize)
     {
-        return ipmi::responseParmOutOfRange();
+        return ipmi::responseReqDataLenInvalid();
     }
 
     if (extendedData.empty())
@@ -8091,7 +8091,7 @@ ipmi::RspType<uint16_t, uint8_t, std::vector<uint8_t>>
     return ipmi::responseSuccess(
         extendedSelMaxSize, progress,
         std::vector<uint8_t>(extData.begin() + offset,
-                             extData.begin() + offset + readLen - 1));
+                             extData.begin() + offset + readLen));
 }
 
 static void registerOEMFunctions(void)
