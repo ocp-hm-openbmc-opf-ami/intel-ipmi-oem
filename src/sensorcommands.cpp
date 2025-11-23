@@ -249,6 +249,8 @@ static constexpr const char* discreteInterface =
 static constexpr const char* eventOnlyInterface =
     "xyz.openbmc_project.Sensor.EventOnly";
 
+constexpr const char* pldmService = "xyz.openbmc_project.PLDM";
+
 bool getDiscreteStatus(const SensorMap& sensorMap,
                        [[maybe_unused]] const std::string path,
                        uint16_t& assertions)
@@ -1037,6 +1039,15 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
     double min = 0;
     getSensorMaxMin(sensorMap, max, min);
 
+    // hardcoded max value as 255 to list pldm sensors
+    if (connection == sensor::pldmService)
+    {
+        if (max > 255.0 || max < 1.0 || max < min)
+        {
+            max = 255.0;
+        }
+    }
+
     int16_t mValue = 0;
     int16_t bValue = 0;
     int8_t rExp = 0;
@@ -1252,6 +1263,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     double min = 0;
     getSensorMaxMin(sensorMap, max, min);
 
+    // hardcoded max value as 255 to list pldm sensors
+    if (connection == sensor::pldmService)
+    {
+        if (max > 255.0 || max < 1.0 || max < min)
+        {
+            max = 255.0;
+        }
+    }
+
     int16_t mValue = 0;
     int16_t bValue = 0;
     int8_t rExp = 0;
@@ -1373,7 +1393,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     return ipmi::responseSuccess();
 }
 
-IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap)
+IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap,
+                                 const std::string& service = "")
 {
     IPMIThresholds resp;
     auto warningInterface =
@@ -1399,6 +1420,15 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap)
         double max = 0;
         double min = 0;
         getSensorMaxMin(sensorMap, max, min);
+
+        // hardcoded max value as 255 to list pldm sensors
+        if (service == sensor::pldmService)
+        {
+            if (max > 255.0 || max < 1.0 || max < min)
+            {
+                max = 255.0;
+            }
+        }
 
         int16_t mValue = 0;
         int16_t bValue = 0;
@@ -2120,6 +2150,15 @@ bool constructSensorSdr(
     double min = 0;
     getSensorMaxMin(sensorMap, max, min);
 
+    // hardcoded max value as 255 to list pldm sensors
+    if (service == sensor::pldmService)
+    {
+        if (max > 255.0 || max < 1.0 || max < min)
+        {
+            max = 255.0;
+        }
+    }
+
     int16_t mValue = 0;
     int8_t rExp = 0;
     int16_t bValue = 0;
@@ -2221,7 +2260,7 @@ bool constructSensorSdr(
     IPMIThresholds thresholdData;
     try
     {
-        thresholdData = getIPMIThresholds(sensorMap);
+        thresholdData = getIPMIThresholds(sensorMap, service);
     }
     catch (const std::exception&)
     {
