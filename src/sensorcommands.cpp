@@ -58,6 +58,10 @@
 using ErrLvl = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
 auto sevLvl = ErrLvl::Informational;
 
+namespace fs = std::filesystem;
+
+static constexpr const char* fruScanLockFile = "/tmp/fru_scan.lock";
+
 namespace ipmi
 {
 using ManagedObjectType =
@@ -3469,12 +3473,27 @@ ipmi::RspType<uint16_t> ipmiStorageReserveSDR()
     return ipmi::responseSuccess(sdrReservationID);
 }
 
+bool isFruScanInProgress()
+{
+    return fs::exists(fruScanLockFile);
+}
+
 ipmi::RspType<uint16_t,            // next record ID
               std::vector<uint8_t> // payload
               >
     ipmiStorageGetSDR(ipmi::Context::ptr ctx, uint16_t reservationID,
                       uint16_t recordID, uint8_t offset, uint8_t bytesToRead)
 {
+    if (isFruScanInProgress())
+    {
+        if constexpr (debug)
+        {
+            lg2::warning("FRU rescan detected — GetSDR returning busy status");
+        }
+        // Return immediately to avoid blocking the IPMI thread
+        return ipmi::response(ipmi::ccBusy);
+    }
+
     // reservation required for partial reads with non zero offset into
     // record
     if ((sdrReservationID == 0 || reservationID != sdrReservationID) && offset)
