@@ -1936,6 +1936,49 @@ ipmi::RspType<uint8_t> ipmiStorageClearSEL(
         static_cast<uint8_t>(ipmi::sel::eraseComplete));
 }
 
+void setLastSelDelStatus()
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    auto methodCall = bus.new_method_call(
+        "xyz.openbmc_project.Settings", "/xyz/openbmc_project/logging/settings",
+        "org.freedesktop.DBus.Properties", "Set");
+
+    std::variant<bool> value = true;
+    methodCall.append("xyz.openbmc_project.Logging.Settings", "selDelStatus",
+                      value);
+    try
+    {
+        bus.call(methodCall);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        std::cerr << "Failed to update Sel delete Status " << std::endl;
+    }
+}
+
+uint16_t getEntryCount()
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    auto methodCall = bus.new_method_call(
+        "xyz.openbmc_project.Settings", "/xyz/openbmc_project/logging/settings",
+        "org.freedesktop.DBus.Properties", "Get");
+
+    methodCall.append("xyz.openbmc_project.Logging.Settings", "ipmiEntryCount");
+    try
+    {
+        auto reply = bus.call(methodCall);
+
+        std::variant<uint16_t> value;
+        reply.read(value);
+        return std::get<uint16_t>(value);
+    }
+    catch (const sdbusplus::exception_t& e)
+    {
+        std::cerr << "Failed to get ipmiEntryCount " << std::endl;
+        return 0;
+    }
+}
+
 /** @brief implements the delete SEL entry command
  * @request
  *   - reservationID; // reservation ID.
@@ -1991,6 +2034,11 @@ ipmi::RspType<uint16_t // deleted record ID
         return ipmi::responseSensorInvalid();
     }
 
+    uint16_t entryCount = getEntryCount();
+    if (entryCount == 1)
+    {
+        setLastSelDelStatus();
+    }
     sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
     std::string service;
 
