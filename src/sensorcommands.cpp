@@ -2256,7 +2256,7 @@ bool constructSensorSdr(
     get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
 
     constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::strncpy(record.body.id_string, name.c_str(), maxLen - 1);
+    std::strncpy(record.body.id_string, name.c_str(), maxLen);
     record.body.id_string[maxLen - 1] = '\0'; // Ensure null-termination
 
     // Remember the sensor name, as determined for this sensor number

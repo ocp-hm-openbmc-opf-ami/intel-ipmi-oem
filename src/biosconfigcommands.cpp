@@ -698,7 +698,9 @@ ipmi::RspType<uint32_t> ipmiOEMSetPayload(ipmi::Context::ptr&, uint8_t paramSel,
     }
 
     // Validate the Payload Type
-    if (payloadType > maxPayloadSupported)
+    constexpr size_t payloadInfoSize =
+        sizeof(gNVOOBdata.payloadInfo) / sizeof(gNVOOBdata.payloadInfo[0]);
+    if (payloadType >= maxPayloadSupported || payloadType >= payloadInfoSize)
     {
         return ipmi::responseInvalidFieldRequest();
     }
@@ -933,7 +935,9 @@ ipmi::RspType<message::Payload> ipmiOEMGetPayload(
         return ipmi::response(ipmiCCBIOSCapabilityInitNotDone);
     }
     // Validate the Payload Type
-    if (payloadType > maxPayloadSupported)
+    constexpr size_t payloadInfoSize =
+        sizeof(gNVOOBdata.payloadInfo) / sizeof(gNVOOBdata.payloadInfo[0]);
+    if (payloadType >= payloadInfoSize)
     {
         return ipmi::responseInvalidFieldRequest();
     }

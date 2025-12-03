@@ -179,7 +179,7 @@ struct IpmbResponse
 
     IpmbResponse(uint8_t address, uint8_t netFn, uint8_t rqLun, uint8_t rsSA,
                  uint8_t seq, uint8_t rsLun, uint8_t cmd,
-                 uint8_t completionCode, std::vector<uint8_t>& inputData);
+                 uint8_t completionCode, std::vector<uint8_t> inputData);
 
     void ipmbToi2cConstruct(uint8_t* buffer, size_t* bufferLength);
 };
