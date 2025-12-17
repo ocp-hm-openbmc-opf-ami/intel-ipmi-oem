@@ -278,7 +278,7 @@ static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
 static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
 static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
-static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xF1;
+static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xCE;
 
 namespace network
 {
