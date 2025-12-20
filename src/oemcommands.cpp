@@ -188,7 +188,8 @@ const static constexpr char* settingsObjPath =
 const static constexpr char* settingsUSBIntf = "xyz.openbmc_project.USB";
 
 const static constexpr char* snmpService = "xyz.openbmc_project.Snmp.Conf";
-const static constexpr char* snmpObjPath = "/xyz/openbmc_project/snmp/SnmpUtils";
+const static constexpr char* snmpObjPath =
+    "/xyz/openbmc_project/snmp/SnmpUtils";
 const static constexpr char* snmpUtilsIntf =
     "xyz.openbmc_project.Snmp.SnmpUtils";
 // Task
@@ -216,9 +217,24 @@ static constexpr const char* chassisStatePath =
 static constexpr const char* chassisStateIntf =
     "xyz.openbmc_project.State.Chassis";
 
+static constexpr const char* serviceMgr =
+    "xyz.openbmc_project.Control.Service.Manager";
+static constexpr const char* basePath = "/xyz/openbmc_project/control/service";
+static constexpr const char* attrIntf =
+    "xyz.openbmc_project.Control.Service.Attributes";
+static constexpr const char* objectManagerIntf =
+    "org.freedesktop.DBus.ObjectManager";
+static constexpr const char* getMgdObjMethod = "GetManagedObjects";
+
 static constexpr uint8_t maxlentimezone = 64;
 
 constexpr bool debug = false;
+
+enum class KCSStatus : uint8_t
+{
+    Disable = 0,
+    Enable = 1
+};
 
 enum class NmiSource : uint8_t
 {
@@ -5821,210 +5837,117 @@ ipmi::RspType<std::vector<uint8_t>> ipmiOEMReadCertficate(
     return ipmi::responseSuccess(caSubVec);
 }
 
-// Helper function to get all KCS services
-static std::vector<std::string> getAllKcsServices(
-    std::shared_ptr<sdbusplus::asio::connection>& dbus)
+inline bool isKcsObjectPath(const std::string& path)
 {
-    std::vector<std::string> kcsServices;
-    try
-    {
-        auto method = dbus->new_method_call(systemDService, systemDObjPath,
-                                            systemDMgrIntf, "ListUnits");
-        auto reply = dbus->call(method);
-
-        std::vector<std::tuple<std::string, std::string, std::string,
-                               std::string, std::string, std::string,
-                               sdbusplus::message::object_path, uint32_t,
-                               std::string, sdbusplus::message::object_path>>
-            units;
-        reply.read(units);
-
-        for (const auto& unit : units)
-        {
-            const std::string& unitName = std::get<0>(unit);
-            // Find all phosphor-ipmi-kcs services
-            if (unitName.find("phosphor-ipmi-kcs@") != std::string::npos &&
-                unitName.find(".service") != std::string::npos)
-            {
-                kcsServices.push_back(unitName);
-            }
-        }
-    }
-    catch (const sdbusplus::exception_t& e)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to list KCS services",
-            phosphor::logging::entry("ERROR=%s", e.what()));
-    }
-    return kcsServices;
+    return (path.find("phosphor_2dipmi_2dkcs") != std::string::npos);
 }
 
-// Helper function to check if any KCS service is active
-static bool isAnyKcsServiceActive(
-    std::shared_ptr<sdbusplus::asio::connection>& dbus,
-    const std::vector<std::string>& kcsServices)
+static std::vector<std::string> getAllKcsPaths(ipmi::Context::ptr& ctx)
 {
-    for (const auto& service : kcsServices)
+    std::vector<std::string> paths;
+
+    boost::system::error_code ec;
+
+    auto managedObjs = ctx->bus->yield_method_call<ipmi::ObjectValueTree>(
+        ctx->yield, ec, serviceMgr, basePath, objectManagerIntf,
+        getMgdObjMethod);
+
+    if (ec)
     {
-        try
+        lg2::error("Failed to get managed objects for KCS status: {EC}", "EC",
+                   ec.message());
+        return paths;
+    }
+
+    for (const auto& [path, _] : managedObjs)
+    {
+        if (isKcsObjectPath(path))
         {
-            auto method = dbus->new_method_call(systemDService, systemDObjPath,
-                                                systemDMgrIntf, "GetUnit");
-            method.append(service);
-            auto reply = dbus->call(method);
-
-            sdbusplus::message::object_path unitTargetPath;
-            reply.read(unitTargetPath);
-
-            method = dbus->new_method_call(
-                systemDService,
-                static_cast<const std::string&>(unitTargetPath).c_str(),
-                systemDInterfaceUnit, "Get");
-            method.append("org.freedesktop.systemd1.Unit", "ActiveState");
-
-            auto result = dbus->call(method);
-            std::variant<std::string> currentState;
-            result.read(currentState);
-
-            const auto& currentStateStr = std::get<std::string>(currentState);
-            if (currentStateStr == activeState ||
-                currentStateStr == activatingState)
-            {
-                return true;
-            }
-        }
-        catch (const sdbusplus::exception_t& e)
-        {
-            // Continue checking other services
-            continue;
+            paths.push_back(path);
         }
     }
-    return false;
+    return paths;
 }
 
-ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus(
-    [[maybe_unused]] ipmi::Context::ptr ctx)
+ipmi::RspType<uint8_t> ipmiOEMGetKCSStatus(ipmi::Context::ptr ctx)
 {
     try
     {
-        auto dbus = getSdBus();
-        auto kcsServices = getAllKcsServices(dbus);
+        auto& bus = ctx->bus;
+        auto kcsPaths = getAllKcsPaths(ctx);
 
-        if (kcsServices.empty())
+        if (kcsPaths.empty())
         {
-            phosphor::logging::log<phosphor::logging::level::WARNING>(
-                "No KCS services found");
-            return ipmi::responseSuccess(
-                static_cast<uint8_t>(KCSStatus::Disable));
+            return ipmi::response(ccParameterNotSupported);
         }
 
-        bool anyActive = isAnyKcsServiceActive(dbus, kcsServices);
-        uint8_t kcsstate = anyActive ? 1 : 0;
+        for (const auto& path : kcsPaths)
+        {
+            try
+            {
+                auto service = ipmi::getService(*bus, attrIntf, path);
 
-        return ipmi::responseSuccess(kcsstate);
+                // Get the Running property for this KCS device
+                auto value = ipmi::getDbusProperty(*bus, service, path,
+                                                   attrIntf, "Running");
+                if (std::get<bool>(value))
+                {
+                    return ipmi::responseSuccess(
+                        static_cast<uint8_t>(KCSStatus::Enable));
+                }
+            }
+            catch (const sdbusplus::exception_t&)
+            {
+                ipmi::responseUnspecifiedError();
+            }
+        }
+        return ipmi::responseSuccess(static_cast<uint8_t>(KCSStatus::Disable));
     }
-    catch (const sdbusplus::exception_t& e)
+    catch (const sdbusplus::exception_t&)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to get KCS status",
-            phosphor::logging::entry("ERROR=%s", e.what()));
         return ipmi::responseSuccess(static_cast<uint8_t>(KCSStatus::Disable));
     }
 }
 
 ipmi::RspType<> ipmiOEMSetKCSStatus(ipmi::Context::ptr ctx, uint8_t reqData)
 {
-    constexpr bool runtimeOnly = false;
-    constexpr bool force = false;
-
-    auto dbus = getSdBus();
-    auto kcsServices = getAllKcsServices(dbus);
-
-    if (kcsServices.empty())
+    if (reqData != static_cast<uint8_t>(KCSStatus::Disable) &&
+        reqData != static_cast<uint8_t>(KCSStatus::Enable))
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "No KCS services found to enable/disable");
-        return ipmi::responseResponseError();
+        return ipmi::responseInvalidFieldRequest();
     }
 
-    if (reqData == static_cast<uint8_t>(KCSStatus::Disable))
+    try
     {
-        // Stop and disable all KCS services
-        for (const auto& service : kcsServices)
+        auto bus = ctx->bus;
+        auto kcsPaths = getAllKcsPaths(ctx);
+
+        if (kcsPaths.empty())
+        {
+            return ipmi::response(ccParameterNotSupported);
+        }
+
+        bool masked = (reqData == static_cast<uint8_t>(KCSStatus::Disable));
+
+        for (const auto& path : kcsPaths)
         {
             try
             {
-                auto method = dbus->new_method_call(
-                    systemDService, systemDObjPath, systemDMgrIntf, "StopUnit");
-                method.append(service, "replace");
-                auto reply = dbus->call(method);
-
-                // Disable the unit
-                boost::system::error_code ec;
-                ctx->bus->yield_method_call(
-                    ctx->yield, ec, systemDService, systemDObjPath,
-                    systemDMgrIntf, "DisableUnitFiles",
-                    std::array<const char*, 1>{service.c_str()}, runtimeOnly);
-
-                if (ec)
-                {
-                    phosphor::logging::log<phosphor::logging::level::WARNING>(
-                        "Failed to disable KCS service",
-                        phosphor::logging::entry("SERVICE=%s",
-                                                 service.c_str()));
-                }
+                auto service = ipmi::getService(*bus, attrIntf, path);
+                ipmi::setDbusProperty(*bus, service, path, attrIntf, "Masked",
+                                      masked);
             }
-            catch (const sdbusplus::exception_t& e)
+            catch (const sdbusplus::exception_t&)
             {
-                phosphor::logging::log<phosphor::logging::level::WARNING>(
-                    "Failed to stop KCS service",
-                    phosphor::logging::entry("SERVICE=%s", service.c_str()),
-                    phosphor::logging::entry("ERROR=%s", e.what()));
+                ipmi::responseUnspecifiedError();
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         return ipmi::responseSuccess();
     }
-    else if (reqData == static_cast<uint8_t>(KCSStatus::Enable))
+    catch (const sdbusplus::exception_t&)
     {
-        // Enable and start all KCS services
-        for (const auto& service : kcsServices)
-        {
-            try
-            {
-                boost::system::error_code ec;
-                ctx->bus->yield_method_call(
-                    ctx->yield, ec, systemDService, systemDObjPath,
-                    systemDMgrIntf, "EnableUnitFiles",
-                    std::array<const char*, 1>{service.c_str()}, runtimeOnly,
-                    force);
-
-                if (ec)
-                {
-                    phosphor::logging::log<phosphor::logging::level::WARNING>(
-                        "Failed to enable KCS service",
-                        phosphor::logging::entry("SERVICE=%s",
-                                                 service.c_str()));
-                }
-
-                auto method = dbus->new_method_call(
-                    systemDService, systemDObjPath, systemDMgrIntf,
-                    "StartUnit");
-                method.append(service, "replace");
-                auto reply = dbus->call(method);
-            }
-            catch (const sdbusplus::exception_t& e)
-            {
-                phosphor::logging::log<phosphor::logging::level::WARNING>(
-                    "Failed to start KCS service",
-                    phosphor::logging::entry("SERVICE=%s", service.c_str()),
-                    phosphor::logging::entry("ERROR=%s", e.what()));
-            }
-        }
-        return ipmi::responseSuccess();
-    }
-    else
-    {
-        return ipmi::responseResponseError();
+        return ipmi::responseUnspecifiedError();
     }
 }
 
