@@ -434,6 +434,8 @@ ipmi::RspType<std::vector<uint8_t> // responseData
     std::vector<uint8_t> unpackMsg;
 
     auto channelNo = static_cast<uint8_t>(channelNumber);
+    uint8_t devIndex = 0xFF;
+    uint8_t channelTypeME = 1;
     // Get the channel number
     switch (channelNo)
     {
@@ -441,6 +443,21 @@ ipmi::RspType<std::vector<uint8_t> // responseData
         case targetChannelIpmb1:
         case targetChannelIpmb2:
         case targetChannelIpmb3:
+            devIndex = getDevIndexForChannel(channelNo);
+            if (devIndex == invalidChannel)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "ipmiAppSendMessage: Invalid IPMI channel number");
+                return ipmi::responseParmOutOfRange();
+            }
+            ipmbMeChannelNum = calculateChannelIdxNum(devIndex, channelTypeME);
+            if (ipmbMeChannelNum == invalidChannel)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "ipmiAppSendMessage: Invalid IPMB ME Channel Index");
+                return ipmi::responseParmOutOfRange();
+            }
+
             if (msg.unpack(unpackMsg) || !msg.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();

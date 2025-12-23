@@ -37,7 +37,57 @@ static inline auto responseNodataAvailablequeuebufferEmpty()
 constexpr uint8_t ipmbLunMask = 0x03;
 constexpr uint8_t ipmbSeqMask = 0x3F;
 constexpr uint8_t ipmbMeTargetAddress = 0x2C;
-constexpr uint8_t ipmbMeChannelNum = 1;
+constexpr uint8_t invalidChannel = 0xFF;
+uint8_t ipmbMeChannelNum = 1;
+
+/**
+ * @brief Channel to devIndex mapping
+ * Maps channel numbers to their corresponding devIndex values
+ */
+struct IpmbChannelMap
+{
+    uint8_t ipmbChannel;
+    uint8_t devIndex;
+};
+
+// Define the mapping
+constexpr IpmbChannelMap ipmbChannelMappings[] = {
+    {0x1, 0}, // Primary IPMB:   Channel 0x1 -> devIndex 0
+    {0x6, 1}, // Secondary IPMB: Channel 0x6 -> devIndex 1
+    {0xD, 2}, // Third IPMB:     Channel 0xD -> devIndex 2
+};
+
+/**
+ * @brief Calculate internal ipmb channel index in from devIndex
+ * @param devIndex - IPMB Device index from JSON configuration
+ * @param type - IPMB Channel type (me=1, ipmb=0)
+ * @return Internal channel routing number
+ */
+constexpr uint8_t calculateChannelIdxNum(uint8_t devIndex, uint8_t type = 1)
+{
+    if (devIndex > 2 || (type != 0 && type != 1))
+    {
+        return invalidChannel;
+    }
+    return (devIndex << 2) | type;
+}
+
+/**
+ * @brief Get devIndex for given bridge channel number
+ * @param ipmbChannel - IPMB bridge channel number
+ * @return devIndex, or 0xFF if not found
+ */
+constexpr uint8_t getDevIndexForChannel(uint8_t ipmbChannel)
+{
+    for (const auto& mapping : ipmbChannelMappings)
+    {
+        if (mapping.ipmbChannel == ipmbChannel)
+        {
+            return mapping.devIndex;
+        }
+    }
+    return invalidChannel; // Invalid
+}
 
 /**
  * @brief Ipmb getters
