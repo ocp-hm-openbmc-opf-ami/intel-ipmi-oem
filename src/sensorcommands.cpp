@@ -1242,12 +1242,6 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         return ipmi::response(status);
     }
 
-    // lower nc and upper nc not suppported on any sensor
-    if (lowerNonRecovThreshMask || upperNonRecovThreshMask)
-    {
-        return ipmi::responseInvalidFieldRequest();
-    }
-
     // if none of the threshold mask are set, nothing to do
     if (!(lowerNonCriticalThreshMask | lowerCriticalThreshMask |
           lowerNonRecovThreshMask | upperNonCriticalThreshMask |
@@ -1405,6 +1399,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             {
                 return ipmi::responseInvalidFieldRequest();
             }
+            auto value = findLower->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Lower Critical Threshold Value Setting");
+                return ipmi::responseInvalidFieldRequest();
+            }
             thresholdsToSet.emplace_back(
                 "NonRecoverableLow", lowerNonRecoverable, findThreshold->first);
         }
@@ -1413,6 +1416,15 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
             auto findUpper = findThreshold->second.find("NonRecoverableHigh");
             if (findUpper == findThreshold->second.end())
             {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            auto value = findUpper->second;
+            // Convert the value to a double using std::visit
+            double doubleValue = std::visit(VariantToDoubleVisitor(), value);
+            if (std::isnan(doubleValue))
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Invaild Lower Critical Threshold Value Setting");
                 return ipmi::responseInvalidFieldRequest();
             }
             thresholdsToSet.emplace_back("NonRecoverableHigh",
@@ -1426,6 +1438,10 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
         double valueToSet = ((mValue * std::get<thresholdValue>(property)) +
                              (bValue * std::pow(10.0, bExp))) *
                             std::pow(10.0, rExp);
+        if (valueToSet < min || valueToSet > max)
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
 
         setDbusProperty(
             *getSdBus(), connection, path, std::get<interface>(property),
