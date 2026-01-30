@@ -49,26 +49,26 @@ static constexpr const uint8_t mdr2Version = 2;        // MDR V2 versoin
 static constexpr const uint8_t smbiosAgentVersion = 1; // Agent version of
                                                        // smbios
 
-static constexpr const uint8_t acpiAgentVersion = 1; // Agent version of
-                                                     // acpi
+static constexpr const uint8_t acpiAgentVersion = 1;   // Agent version of
+                                                       // acpi
 
 static constexpr const uint32_t pageMask =
     0xf000; // To make data become n times of page
 static constexpr const int mdrv2DirIndex = 0; // SMBIOS directory index
 
 static constexpr const uint32_t smbiosTableVersion =
-    15;          // Version of smbios table
+    15;                                               // Version of smbios table
 static constexpr const uint32_t acpiTableVersion = 1; // Version of acpi table
 static constexpr const uint32_t smbiosTableTimestamp =
     0x45464748;  // Time stamp when smbios table created
 static constexpr const uint32_t acpiTableTimestamp =
-    0; // Time stamp when smbios table created
+    0;           // Time stamp when smbios table created
 static constexpr const size_t smbiosSMMemoryOffset =
     0;           // Offset of VGA share memory
 static constexpr const size_t smbiosSMMemorySize =
     1024 * 1024; // Total size of VGA share memory
 static constexpr const size_t acpiSMMemoryOffset =
-    0; // Offset of VGA share memory
+    0;           // Offset of VGA share memory
 static constexpr const size_t acpiSMMemorySize =
     1024 * 1024; // Total size of VGA share memory
 static constexpr const size_t smbiosTableStorageSize =
@@ -300,82 +300,83 @@ class MDRV2
                                ipmi::DbusVariant& value,
                                const std::string& service);
 
-    Mdr2DirStruct mdrv2Dir[maxAgentID]{{acpiAgentVersion,
-                                        1,
-                                        1,
-                                        1,
-                                        0,
-                                        0,
-                                        {40,
-                                         41,
-                                         42,
-                                         43,
-                                         44,
-                                         45,
-                                         46,
-                                         47,
-                                         48,
-                                         49,
-                                         50,
-                                         51,
-                                         52,
-                                         53,
-                                         54,
-                                         0x42,
-                                         0,
-                                         acpiTableStorageSize,
-                                         acpiTableVersion,
-                                         acpiTableTimestamp,
-                                         MDR2SMBIOSStatusEnum::mdr2Init,
-                                         MDR2DirLockEnum::mdr2DirUnlock,
-                                         0,
-                                         acpiSMMemoryOffset,
-                                         acpiSMMemorySize,
-                                         acpiTableStorageSize,
-                                         acpiTableStorage},
-                                        1,
-                                        const_cast<char*>(acpiPath),
-                                        const_cast<char*>(acpiType2File),
-                                        nullptr,
-                                        nullptr},
-                                       {smbiosAgentVersion,
-                                        1,
-                                        1,
-                                        1,
-                                        0,
-                                        0,
-                                        {40,
-                                         41,
-                                         42,
-                                         43,
-                                         44,
-                                         45,
-                                         46,
-                                         47,
-                                         48,
-                                         49,
-                                         50,
-                                         51,
-                                         52,
-                                         53,
-                                         54,
-                                         0x42,
-                                         0,
-                                         smbiosTableStorageSize,
-                                         smbiosTableVersion,
-                                         smbiosTableTimestamp,
-                                         MDR2SMBIOSStatusEnum::mdr2Init,
-                                         MDR2DirLockEnum::mdr2DirUnlock,
-                                         0,
-                                         smbiosSMMemoryOffset,
-                                         smbiosSMMemorySize,
-                                         smbiosTableStorageSize,
-                                         smbiosTableStorage},
-                                        0,
-                                        const_cast<char*>(smbiosPath),
-                                        const_cast<char*>(mdrType2File),
-                                        const_cast<char*>(smbiosMdrv2Interface),
-                                        const_cast<char*>(smbiosMdrv2Path)}};
+    Mdr2DirStruct mdrv2Dir[maxAgentID]{
+        {acpiAgentVersion,
+         1,
+         1,
+         1,
+         0,
+         0,
+         {40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          0x42,
+          0,
+          acpiTableStorageSize,
+          acpiTableVersion,
+          acpiTableTimestamp,
+          MDR2SMBIOSStatusEnum::mdr2Init,
+          MDR2DirLockEnum::mdr2DirUnlock,
+          0,
+          acpiSMMemoryOffset,
+          acpiSMMemorySize,
+          acpiTableStorageSize,
+          acpiTableStorage},
+         1,
+         const_cast<char*>(acpiPath),
+         const_cast<char*>(acpiType2File),
+         nullptr,
+         nullptr},
+        {smbiosAgentVersion,
+         1,
+         1,
+         1,
+         0,
+         0,
+         {40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          0x42,
+          0,
+          smbiosTableStorageSize,
+          smbiosTableVersion,
+          smbiosTableTimestamp,
+          MDR2SMBIOSStatusEnum::mdr2Init,
+          MDR2DirLockEnum::mdr2DirUnlock,
+          0,
+          smbiosSMMemoryOffset,
+          smbiosSMMemorySize,
+          smbiosTableStorageSize,
+          smbiosTableStorage},
+         0,
+         const_cast<char*>(smbiosPath),
+         const_cast<char*>(mdrType2File),
+         const_cast<char*>(smbiosMdrv2Interface),
+         const_cast<char*>(smbiosMdrv2Path)}};
 
     std::unique_ptr<SharedMemoryArea> area;
     std::unique_ptr<sdbusplus::Timer> timer;

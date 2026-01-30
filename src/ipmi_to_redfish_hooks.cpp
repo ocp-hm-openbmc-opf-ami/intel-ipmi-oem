@@ -931,13 +931,14 @@ bool checkRedfishHooks(uint16_t recordID, uint8_t recordType,
     }
 
     // Extract the SEL data for the hook
-    redfish_hooks::SELData selData = {.generatorID = generatorID,
-                                      .sensorNum = sensorNum,
-                                      .sensorType = 0xFF,
-                                      .eventType = eventType,
-                                      .offset = eventData1 & 0x0F,
-                                      .eventData2 = eventData2,
-                                      .eventData3 = eventData3};
+    redfish_hooks::SELData selData = {
+        .generatorID = generatorID,
+        .sensorNum = sensorNum,
+        .sensorType = 0xFF,
+        .eventType = eventType,
+        .offset = eventData1 & 0x0F,
+        .eventData2 = eventData2,
+        .eventData3 = eventData3};
 
     return redfish_hooks::startRedfishHook(selData, ipmiRaw);
 }
@@ -961,13 +962,14 @@ bool checkRedfishHooks(uint16_t generatorID, uint8_t evmRev, uint8_t sensorType,
     redfish_hooks::toHexStr(boost::beast::span<uint8_t>(selBytes), ipmiRaw);
 
     // Extract the SEL data for the hook
-    redfish_hooks::SELData selData = {.generatorID = generatorID,
-                                      .sensorNum = sensorNum,
-				      .sensorType = 0xFF,
-                                      .eventType = eventType,
-                                      .offset = eventData1 & 0x0F,
-                                      .eventData2 = eventData2,
-                                      .eventData3 = eventData3};
+    redfish_hooks::SELData selData = {
+        .generatorID = generatorID,
+        .sensorNum = sensorNum,
+        .sensorType = 0xFF,
+        .eventType = eventType,
+        .offset = eventData1 & 0x0F,
+        .eventData2 = eventData2,
+        .eventData3 = eventData3};
 
     return redfish_hooks::startRedfishHook(selData, ipmiRaw);
 }

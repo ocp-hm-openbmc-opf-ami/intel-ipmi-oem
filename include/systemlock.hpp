@@ -23,8 +23,8 @@ inline bool getDbusSysLockProperty()
         ipmi::Value v = ipmi::getDbusProperty(*dbus, service, systemLockObj,
                                               systemLockIntf, "SystemLocked");
         sysLock = std::get<bool>(v);
-	// Disabling this log to reduce unnecessary error messages in the journal.
-	// Enable if Debugging is Required 
+        // Disabling this log to reduce unnecessary error messages in the
+        // journal. Enable if Debugging is Required
         /*phosphor::logging::log<phosphor::logging::level::ERR>(
             "Get syslock property"); */
     }
@@ -37,7 +37,8 @@ inline bool getDbusSysLockProperty()
 }
 namespace ipmi
 {
-/** @brief filter the set commands from ipmi-set-allowlist configuartion file **/
+/** @brief filter the set commands from ipmi-set-allowlist configuartion file
+ * **/
 ipmi::Cc filterSetCmdMessage(ipmi::message::Request::ptr request)
 {
     auto channelMask = static_cast<unsigned short>(1 << request->ctx->channel);

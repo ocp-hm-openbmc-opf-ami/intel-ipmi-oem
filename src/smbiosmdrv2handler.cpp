@@ -243,8 +243,8 @@ uint32_t MDRV2::calcChecksum32(uint8_t* buf, uint32_t len)
  *  - dirEntries
  *  - dataRequest
  */
-ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t>
-    mdr2AgentStatus(uint16_t agentId, uint8_t dirVersion)
+ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t> mdr2AgentStatus(
+    uint16_t agentId, uint8_t dirVersion)
 {
     if (mdrv2 == nullptr)
     {
@@ -287,8 +287,8 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t>
  *  @returns IPMI completion code plus response data
  *  - dataOut
  */
-ipmi::RspType<std::vector<uint8_t>>
-    mdr2GetDir(uint16_t agentId, uint8_t dirIndex)
+ipmi::RspType<std::vector<uint8_t>> mdr2GetDir(uint16_t agentId,
+                                               uint8_t dirIndex)
 {
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
 
@@ -391,10 +391,10 @@ ipmi::RspType<std::vector<uint8_t>>
  *  - bool
  */
 
-ipmi::RspType<bool>
-    mdr2SendDir(uint16_t agentId, uint8_t dirVersion, uint8_t dirIndex,
-                uint8_t returnedEntries, uint8_t remainingEntries,
-                std::vector<uint8_t> dataInfo)
+ipmi::RspType<bool> mdr2SendDir(uint16_t agentId, uint8_t dirVersion,
+                                uint8_t dirIndex, uint8_t returnedEntries,
+                                uint8_t remainingEntries,
+                                std::vector<uint8_t> dataInfo)
 {
     if ((static_cast<size_t>(returnedEntries) * dataInfoSize) !=
         dataInfo.size())
@@ -470,8 +470,8 @@ ipmi::RspType<bool>
  *  - response - mdrVersion, data info, validFlag,
  *               dataLength, dataVersion, timeStamp
  */
-ipmi::RspType<std::vector<uint8_t>>
-    mdr2GetDataInfo(uint16_t agentId, std::vector<uint8_t> dataInfo)
+ipmi::RspType<std::vector<uint8_t>> mdr2GetDataInfo(
+    uint16_t agentId, std::vector<uint8_t> dataInfo)
 {
     constexpr size_t getDataInfoReqSize = 16;
 
@@ -799,8 +799,9 @@ ipmi::RspType<uint32_t,            // xferLength
     std::vector<uint8_t> data(outSize);
 
     std::copy(&mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage[xferOffset],
-              &mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage[xferOffset +
-                                                                    outSize],
+              &mdrv2->mdrv2Dir[agentIndex]
+                   .dir[idIndex]
+                   .dataStorage[xferOffset + outSize],
               data.begin());
 
     return ipmi::responseSuccess(respXferLength, u32Checksum, data);
@@ -866,7 +867,7 @@ ipmi::RspType<> mdr2SendDataBlock(uint16_t agentId, uint16_t lockHandle,
                 "Offset is out of range");
             return ipmi::responseParmOutOfRange();
         }
-	uint8_t* destAddr =
+        uint8_t* destAddr =
             mdrv2->mdrv2Dir[agentIndex].dir[idIndex].dataStorage + xferOffset;
         uint8_t* sourceAddr = reinterpret_cast<uint8_t*>(mdrv2->area->vPtr);
         uint32_t calcChecksum = mdrv2->calcChecksum32(sourceAddr, xferLength);
@@ -1309,9 +1310,9 @@ ipmi::RspType<uint8_t, uint16_t> cmd_mdr2_data_start(
     else
     {
         std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
-        service = ipmi::getService(*bus,
-                                   mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
-                                   mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
+        service =
+            ipmi::getService(*bus, mdrv2->mdrv2Dir[agentIndex].mdrv2Interface,
+                             mdrv2->mdrv2Dir[agentIndex].mdrv2Path);
         idIndex = mdrv2->findDataId(dataInfo.data(), dataInfo.size(), service);
 
         if ((idIndex < 0) || (idIndex >= maxDirEntries))
@@ -1389,7 +1390,7 @@ ipmi::RspType<> cmd_mdr2_data_done(uint16_t agentId, uint16_t lockHandle)
         return ipmi::responseParmOutOfRange();
     }
 
-    int idIndex = mdrv2->findLockHandle(agentIndex,lockHandle);
+    int idIndex = mdrv2->findLockHandle(agentIndex, lockHandle);
 
     if ((idIndex < 0) || (idIndex >= maxDirEntries))
     {
