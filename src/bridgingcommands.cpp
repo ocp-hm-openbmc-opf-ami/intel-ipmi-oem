@@ -824,6 +824,30 @@ ipmi::RspType<uint16_t,             // Record ID
     }
     if (eventMsgBuf != false)
     {
+        uint16_t ipmiEntryCount = 0;
+        auto countMethod =
+            bus.new_method_call("xyz.openbmc_project.Settings",
+                                "/xyz/openbmc_project/logging/settings",
+                                "org.freedesktop.DBus.Properties", "Get");
+        countMethod.append("xyz.openbmc_project.Logging.Settings",
+                           "ipmiEntryCount");
+        try
+        {
+            auto countReply = bus.call(countMethod);
+            std::variant<uint16_t> countValue;
+            countReply.read(countValue);
+            ipmiEntryCount = std::get<uint16_t>(countValue);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to get IpmiEntryCount",
+                phosphor::logging::entry("ERROR=%s", e.what()));
+        }
+        if (ipmiEntryCount == 0)
+        {
+            return ipmi::responseNodataAvailablequeuebufferEmpty();
+        }
         auto mapperCall = bus.new_method_call(
             "xyz.openbmc_project.ObjectMapper",
             "/xyz/openbmc_project/object_mapper",
