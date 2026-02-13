@@ -192,14 +192,6 @@ const static constexpr char* snmpObjPath =
     "/xyz/openbmc_project/snmp/SnmpUtils";
 const static constexpr char* snmpUtilsIntf =
     "xyz.openbmc_project.Snmp.SnmpUtils";
-// Task
-static constexpr auto taskIntf = "xyz.openbmc_project.Common.Task";
-static constexpr auto systemRoot = "/xyz/openbmc_project/";
-static constexpr uint8_t INVALID_ID = 0x00;
-static constexpr auto cancelTask =
-    "xyz.openbmc_project.Common.Task.OperationStatus.Cancelled";
-static constexpr auto newTask =
-    "xyz.openbmc_project.Common.Task.OperationStatus.New";
 
 // BIOS PostCode object in dbus
 static constexpr const char* postCodesService =
@@ -5951,80 +5943,6 @@ ipmi::RspType<> ipmiOEMSetKCSStatus(ipmi::Context::ptr ctx, uint8_t reqData)
     }
 }
 
-ipmi::RspType<> ipmiOEMCancelTask([[maybe_unused]] ipmi::Context::ptr ctx,
-                                  uint8_t req)
-{
-    if (req == INVALID_ID)
-    {
-        return ipmi::responseInvalidFieldRequest();
-    }
-    ipmi::ObjectTree objectTree;
-
-    boost::system::error_code ec =
-        ipmi::getAllDbusObjects(ctx, systemRoot, taskIntf, objectTree);
-
-    if (ec)
-    {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to fetch Task object from dbus",
-            phosphor::logging::entry("INTERFACE=%s", taskIntf),
-            phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
-        return ipmi::responseUnspecifiedError();
-    }
-
-    for (auto& softObject : objectTree)
-    {
-        const std::string& objPath = softObject.first;
-        const std::string& serviceName = softObject.second.begin()->first;
-        ipmi::PropertyMap result;
-
-        ec = ipmi::getAllDbusProperties(ctx, serviceName, objPath, taskIntf,
-                                        result);
-        if (ec)
-        {
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "Failed to fetch Task properties",
-                phosphor::logging::entry("ERROR=%s", ec.message().c_str()));
-            return ipmi::responseUnspecifiedError();
-        }
-
-        const uint16_t* id = nullptr;
-        std::string status;
-
-        for (const auto& [propName, propVariant] : result)
-        {
-            if (propName == "TaskId")
-            {
-                id = std::get_if<uint16_t>(&propVariant);
-            }
-            else if (propName == "Status")
-            {
-                status = std::get<std::string>(propVariant);
-            }
-        }
-
-        if (*id == req && (status.compare(newTask) == 0))
-        {
-            try
-            {
-                ipmi::setDbusProperty(ctx, serviceName, objPath, taskIntf,
-                                      "Status", cancelTask);
-                return ipmi::response(ipmi::ccSuccess);
-            }
-            catch (const sdbusplus::exception_t& e)
-            {
-                phosphor::logging::log<phosphor::logging::level::ERR>(
-                    "ipmiOEMCancelTask: can't set Task Status!",
-                    phosphor::logging::entry("EXCEPTION=%s", e.what()));
-                return ipmi::responseResponseError();
-            }
-        }
-    }
-
-    // couldn't find requested ID
-    return ipmi::responseInvalidFieldRequest();
-}
-
 ipmi::RspType<uint8_t, uint8_t> ipmiGetUsbDescription(uint8_t type)
 {
     uint8_t msbId;
@@ -8343,11 +8261,6 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdOEMSetKCSStatus, Privilege::Admin,
                     ipmiOEMSetKCSStatus);
-
-    // <Cancel Task>
-    registerHandler(prioOemBase, ami::netFnGeneral,
-                    ami::general::cmdOEMCancelTask, Privilege::Admin,
-                    ipmiOEMCancelTask);
 
     //<Set SNMP trap Status>
     registerHandler(prioOemBase, ami::netFnGeneral,

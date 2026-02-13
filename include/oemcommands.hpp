@@ -254,7 +254,6 @@ static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
 static constexpr Cmd cmdOEMSetSELPolicy = 0x7F;
 static constexpr Cmd cmdOEMGetKCSStatus = 0x3E;
 static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
-static constexpr Cmd cmdOEMCancelTask = 0xB1;
 static constexpr Cmd cmdOEMEnDisPowerSaveMode = 0xAA;
 static constexpr Cmd cmdOEMGetPowerSaveMode = 0xAB;
 static constexpr Cmd cmdOEMTriggerScreenshot = 0xD2;
