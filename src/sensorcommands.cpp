@@ -572,9 +572,11 @@ bool constructDiscreteSdr(
     }
     std::replace(name.begin(), name.end(), '_', ' ');
     record.body.id_string_info = name.size();
-    std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string) - 1);
-    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
+    constexpr size_t maxLen = sizeof(record.body.id_string);
+    std::memset(record.body.id_string, 0, maxLen);
+    size_t copyLen = std::min(name.size(), maxLen);
+    std::memcpy(record.body.id_string, name.data(), copyLen);
+    record.body.id_string_info = copyLen;
 
     details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
@@ -671,9 +673,11 @@ bool constructEventSdr(
 
     record.body.id_string_info = name.size();
 
-    std::strncpy(record.body.id_string, name.c_str(),
-                 sizeof(record.body.id_string) - 1);
-    record.body.id_string[sizeof(record.body.id_string) - 1] = '\0';
+    constexpr size_t maxLen = sizeof(record.body.id_string);
+    std::memset(record.body.id_string, 0, maxLen);
+    size_t copyLen = std::min(name.size(), maxLen);
+    std::memcpy(record.body.id_string, name.data(), copyLen);
+    record.body.id_string_info = copyLen;
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -2309,8 +2313,10 @@ bool constructSensorSdr(
     get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
 
     constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::strncpy(record.body.id_string, name.c_str(), maxLen);
-    record.body.id_string[maxLen - 1] = '\0'; // Ensure null-termination
+    std::memset(record.body.id_string, 0, maxLen);
+    size_t copyLen = std::min(name.size(), maxLen);
+    std::memcpy(record.body.id_string, name.data(), copyLen);
+    record.body.id_string_info = copyLen;
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
