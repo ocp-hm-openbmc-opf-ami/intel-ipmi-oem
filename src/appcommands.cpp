@@ -209,18 +209,31 @@ std::optional<MetaRevision> convertIntelVersion(std::string& s)
 {
     std::smatch results;
     MetaRevision rev;
-    std::regex pattern1("(\\d+?).(\\d+?).\\d+?-\\w*?-(\\d+?)-g(\\w+?)-(\\w+?)");
-    constexpr size_t matchedPhosphor = 6;
-    if (std::regex_match(s, results, pattern1))
-    {
-        if (results.size() == matchedPhosphor)
+
+    auto fillRev = [&](const std::string& platform, int majIdx, int minIdx,
+                       int buildIdx, int hashIdx,
+                       int metaIdx) -> std::optional<MetaRevision> {
+        try
         {
-            rev.platform = "whtref";
-            rev.major = static_cast<uint8_t>(std::stoi(results[1]));
-            rev.minor = static_cast<uint8_t>(std::stoi(results[2]));
-            rev.buildNo = static_cast<uint32_t>(std::stoi(results[3]));
-            rev.openbmcHash = results[4];
-            rev.metaHash = results[5];
+            int major = std::stoi(results[majIdx]);
+            int minor = std::stoi(results[minIdx]);
+            int buildNo = std::stoi(results[buildIdx]);
+
+            if (major > UINT8_MAX || major < 0 || minor > UINT8_MAX ||
+                minor < 0 || buildNo < 0)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "Version field out of range",
+                    phosphor::logging::entry("VERSION=%s", s.c_str()));
+                return std::nullopt;
+            }
+
+            rev.platform = platform;
+            rev.major = static_cast<uint8_t>(major);
+            rev.minor = static_cast<uint8_t>(minor);
+            rev.buildNo = static_cast<uint32_t>(buildNo);
+            rev.openbmcHash = results[hashIdx];
+            rev.metaHash = results[metaIdx];
             std::string versionString =
                 rev.platform + ":" + std::to_string(rev.major) + ":" +
                 std::to_string(rev.minor) + ":" + std::to_string(rev.buildNo) +
@@ -230,37 +243,55 @@ std::optional<MetaRevision> convertIntelVersion(std::string& s)
                 phosphor::logging::entry("VERSION=%s", versionString.c_str()));
             return rev;
         }
-    }
-    constexpr size_t matchedIntel = 7;
-    std::regex pattern2(
-        "(\\w+?)-(\\d+?).(\\d+?)[-.]dev-(\\d+?)-g(\\w+?)-(\\w+?)"); // pattern2
-                                                                    // support
-                                                                    // the dev
-                                                                    // tag
-    std::regex pattern3(
-        "(\\w+?)-(\\d+?).(\\d+?)[-.](\\d+?)-g(\\w+?)-(\\w+?)");     // pattern3
-                                                                    // supports
-    // without dev
-    // tag
-    if (std::regex_match(s, results, pattern2) ||
-        std::regex_match(s, results, pattern3))
-    {
-        if (results.size() == matchedIntel)
+        catch (const std::exception& e)
         {
-            rev.platform = results[1];
-            rev.major = static_cast<uint8_t>(std::stoi(results[2]));
-            rev.minor = static_cast<uint8_t>(std::stoi(results[3]));
-            rev.buildNo = static_cast<uint32_t>(std::stoi(results[4]));
-            rev.openbmcHash = results[6];
-            rev.metaHash = results[5];
-            std::string versionString =
-                rev.platform + ":" + std::to_string(rev.major) + ":" +
-                std::to_string(rev.minor) + ":" + std::to_string(rev.buildNo) +
-                ":" + rev.openbmcHash + ":" + rev.metaHash;
-            phosphor::logging::log<phosphor::logging::level::INFO>(
-                "Get BMC version",
-                phosphor::logging::entry("VERSION=%s", versionString.c_str()));
-            return rev;
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to parse BMC version",
+                phosphor::logging::entry("VERSION=%s", s.c_str()),
+                phosphor::logging::entry("ERROR=%s", e.what()));
+            return std::nullopt;
+        }
+    };
+
+    // pattern2/3: 1 full match + 6 capture groups
+    constexpr size_t intelVersionMatchCount = 7;
+    // pattern2 support the dev tag
+    std::regex pattern2(
+        "(\\w+?)-(\\d+?).(\\d+?)[-.]dev-(\\d+?)-g(\\w+?)-(\\w+?)");
+    // pattern3 supports without dev tag
+    std::regex pattern3("(\\w+?)-(\\d+?).(\\d+?)[-.](\\d+?)-g(\\w+?)-(\\w+?)");
+
+    // pattern4: 1 full match + 7 capture groups
+    constexpr size_t dateBasedVersionMatchCount = 8;
+    // pattern4 supports date-based version tags
+    std::regex pattern4(
+        "(\\w+?)-(\\d+?)\\.(\\d+?)\\.(\\d+?)-(\\d+?)-g(\\w+?)-(\\w+?)");
+
+    if (std::regex_match(s, results, pattern4))
+    {
+        if (results.size() == dateBasedVersionMatchCount)
+        {
+            return fillRev(results[1], 2, 3, 5, 7, 6);
+        }
+    }
+    else if (std::regex_match(s, results, pattern2) ||
+             std::regex_match(s, results, pattern3))
+    {
+        if (results.size() == intelVersionMatchCount)
+        {
+            return fillRev(results[1], 2, 3, 4, 6, 5);
+        }
+    }
+
+    // pattern1: 1 full match + 5 capture groups
+    constexpr size_t phosphorVersionMatchCount = 6;
+    // pattern1: legacy phosphor format (rarely used, checked last)
+    std::regex pattern1("(\\d+?).(\\d+?).\\d+?-\\w*?-(\\d+?)-g(\\w+?)-(\\w+?)");
+    if (std::regex_match(s, results, pattern1))
+    {
+        if (results.size() == phosphorVersionMatchCount)
+        {
+            return fillRev("whtref", 1, 2, 3, 4, 5);
         }
     }
 
