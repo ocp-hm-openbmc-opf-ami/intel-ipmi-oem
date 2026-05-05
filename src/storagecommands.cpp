@@ -859,7 +859,7 @@ void recalculateHashes()
             }
             auto configBus = properties.find("Bus");
             auto configAddr = properties.find("Address");
-            uint8_t confBus = 0;
+            uint16_t confBus = 0;
             uint8_t confAddr = 0;
             fruHash = 0;
 
@@ -870,7 +870,7 @@ void recalculateHashes()
             }
             else
             {
-                if (auto busValue = std::get_if<uint8_t>(&configBus->second);
+                if (auto busValue = std::get_if<uint16_t>(&configBus->second);
                     busValue != nullptr)
                 {
                     if (auto addrValue =
@@ -882,7 +882,7 @@ void recalculateHashes()
                     }
                 }
             }
-            if ((static_cast<uint8_t>(fruBus) == confBus) &&
+            if ((static_cast<uint16_t>(fruBus) == confBus) &&
                 (static_cast<uint8_t>(fruAddr) == confAddr))
             {
                 auto fruIdIter = properties.find("FruId");
