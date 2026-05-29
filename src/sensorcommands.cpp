@@ -884,6 +884,7 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     addData["GENERATOR_ID"] = std::to_string(generatorID);
     addData["RECORD_TYPE"] = std::to_string(systemRecordType);
     addData["SENSOR_TYPE"] = std::to_string(sensorType);
+    addData["SENSOR_NUMBER"] = std::to_string(sensorNum);
 
     std::string redfishMessage = intel_oem::ipmi::sel::checkRedfishMessage(
         generatorID, sensorType, sensorNum, eventType, eventData1);

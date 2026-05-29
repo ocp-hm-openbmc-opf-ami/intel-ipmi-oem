@@ -403,6 +403,20 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
             elog<InternalFailure>();
         }
     }
+
+    {
+        auto numIt = m.find("SENSOR_NUMBER");
+        if (numIt != m.end() && record.event.eventRecord.sensorNum == 0xFF)
+        {
+            try
+            {
+                record.event.eventRecord.sensorNum =
+                    static_cast<uint8_t>(std::stoul(numIt->second, nullptr, 0));
+            }
+            catch (const std::exception&)
+            {}
+        }
+    }
     record.event.eventRecord.eventMsgRevision = eventMsgRevision;
     record.event.eventRecord.generatorID = 0;
 
@@ -1856,6 +1870,7 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         addData["RECORD_TYPE"] = std::to_string(recordType);
         addData["SENSOR_TYPE"] = std::to_string(sensorType);
         addData["EVENT_TYPE"] = std::to_string(eventType);
+        addData["SENSOR_NUMBER"] = std::to_string(sensorNumber);
         try
         {
             std::string service =
