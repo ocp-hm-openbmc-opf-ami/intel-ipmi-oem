@@ -20,6 +20,7 @@
 #include "fruutils.hpp"
 #include "ipmi_to_redfish_hooks.hpp"
 #include "sdrutils.hpp"
+#include "sel_redfish_map.hpp"
 #include "types.hpp"
 #include "xyz/openbmc_project/Logging/Entry/server.hpp"
 
@@ -27,7 +28,6 @@
 
 #include <boost/algorithm/string.hpp>
 #include <boost/container/flat_map.hpp>
-#include <boost/process.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/message.hpp>
 #include <ipmid/utils.hpp>
@@ -66,7 +66,9 @@ using SELRecordID = uint16_t;
 using SELEntry = ipmi::sel::SELEventRecordFormat;
 using SELCacheMap = std::map<SELRecordID, SELEntry>;
 using additionalDataMap = std::map<std::string, std::string>;
-using entryDataMap = std::map<ipmi::sel::PropertyName, ipmi::sel::PropertyType>;
+using logEntryPropertyType =
+    std::variant<bool, uint32_t, uint64_t, std::string, additionalDataMap>;
+using entryDataMap = std::map<ipmi::sel::PropertyName, logEntryPropertyType>;
 using SELPolicyData = ami::ipmi::sel::SELPolicyinfo;
 SELPolicyData selPolicyInfo;
 
@@ -148,9 +150,10 @@ void readLoggingObjectPathst(ipmi::sel::ObjectPaths& paths)
     auto depth = 0;
     paths.clear();
 
-    auto mapperCall =
-        bus.new_method_call(ipmi::sel::mapperBusName, ipmi::sel::mapperObjPath,
-                            ipmi::sel::mapperIntf, "GetSubTreePaths");
+    auto mapperCall = bus.new_method_call(
+        "xyz.openbmc_project.ObjectMapper",
+        "/xyz/openbmc_project/object_mapper",
+        "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths");
     mapperCall.append(logBasePath);
     mapperCall.append(depth);
     mapperCall.append(ipmi::sel::ObjectPaths({ipmi::sel::logEntryIntf}));
@@ -196,10 +199,36 @@ additionalDataMap parseAdditionalData(const ipmi::sel::AdditionalData& data)
 
     for (const auto& d : data)
     {
-        ret.insert(parseEntry(d));
+        ret.insert(d);
     }
     return ret;
 }
+
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+static bool getStaticSensorNumberFromAdditionalData(
+    const additionalDataMap& data, uint8_t& sensorNum)
+{
+    static constexpr auto strSensorNum = "SENSOR_NUM";
+    auto iter = data.find(strSensorNum);
+    if (iter == data.end())
+    {
+        return false;
+    }
+
+    try
+    {
+        uint16_t parsedSensorNum =
+            static_cast<uint16_t>(std::stoul(iter->second, nullptr, 0));
+        sensorNum = static_cast<uint8_t>(parsedSensorNum);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+#endif // FEATURE_STATIC_SENSOR_NUMBER
+
 uint8_t convert(const std::string_view& str, int base = 10)
 {
     int ret;
@@ -280,8 +309,8 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
         return record;
     }
 
-    const auto& addData = std::get<ipmi::sel::AdditionalData>(iterData->second);
-    m = parseAdditionalData(addData);
+    const auto& addData = std::get<additionalDataMap>(iterData->second);
+    m = addData;
     auto recordType = static_cast<uint8_t>(convert(m[strRecordType]));
 
     if ((recordType >= oemRecordTypeC0 && recordType <= oemRecordTypeDF) ||
@@ -390,8 +419,18 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
     {
         try
         {
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+            if (!getStaticSensorNumberFromAdditionalData(
+                    m, record.event.eventRecord.sensorNum))
+            {
+                log<level::WARNING>(
+                    "Static sensor number missing in SEL additional data, using default sensor number",
+                    phosphor::logging::entry("PATH=%s", sensorPath.c_str()));
+            }
+#else
             record.event.eventRecord.sensorNum =
                 getSensorNumberFromPath(sensorPath);
+#endif
             record.event.eventRecord.eventType =
                 getSensorEventTypeFromPath(sensorPath);
             record.event.eventRecord.sensorType =
@@ -404,14 +443,39 @@ ipmi::sel::GetSELEntryResponse createSELEntry(const std::string& objPath)
         }
     }
 
+    // Fall back to the originally-supplied IPMI bytes when the sensor was not
+    // resolved on D-Bus, so injected entries (BIOS / ME / synthetic) still
+    // surface the user's sensor number / type / event type instead of 0xFF/0/0.
     {
         auto numIt = m.find("SENSOR_NUMBER");
-        if (numIt != m.end() && record.event.eventRecord.sensorNum == 0xFF)
+        if (numIt != m.end())
         {
             try
             {
                 record.event.eventRecord.sensorNum =
                     static_cast<uint8_t>(std::stoul(numIt->second, nullptr, 0));
+            }
+            catch (const std::exception&)
+            {}
+        }
+        auto stIt = m.find("SENSOR_TYPE");
+        if (stIt != m.end() && record.event.eventRecord.sensorType == 0)
+        {
+            try
+            {
+                record.event.eventRecord.sensorType =
+                    static_cast<uint8_t>(std::stoul(stIt->second, nullptr, 0));
+            }
+            catch (const std::exception&)
+            {}
+        }
+        auto etIt = m.find("EVENT_TYPE");
+        if (etIt != m.end() && record.event.eventRecord.eventType == 0)
+        {
+            try
+            {
+                record.event.eventRecord.eventType =
+                    static_cast<uint8_t>(std::stoul(etIt->second, nullptr, 0));
             }
             catch (const std::exception&)
             {}
@@ -969,7 +1033,7 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
     auto deviceFind = deviceHashes.find(devId);
     if (deviceFind == deviceHashes.end())
     {
-        return IPMI_CC_SENSOR_INVALID;
+        return ipmi::ccSensorInvalid;
     }
 
     if (writeTimer->isRunning())
@@ -1098,9 +1162,12 @@ void startMatch(void)
         });
 
     // call once to populate
-    boost::asio::spawn(*getIoContext(), [](boost::asio::yield_context yield) {
-        replaceCacheFru(getSdBus(), yield);
-    });
+    boost::asio::spawn(
+        *getIoContext(),
+        [](boost::asio::yield_context yield) {
+            replaceCacheFru(getSdBus(), yield);
+        },
+        boost::asio::detached);
 }
 
 /** @brief implements the read FRU data command
@@ -1416,11 +1483,10 @@ ipmi::Cc getFruSdrs(ipmi::Context::ptr& ctx, size_t index,
     }
     size_t sizeDiff = maxFruSdrNameSize - name.size();
 
-    resp.header.record_id_lsb = 0x0; // calling code is to implement these
-    resp.header.record_id_msb = 0x0;
-    resp.header.sdr_version = ipmiSdrVersion;
-    resp.header.record_type = get_sdr::SENSOR_DATA_FRU_RECORD;
-    resp.header.record_length = sizeof(resp.body) + sizeof(resp.key) - sizeDiff;
+    resp.header.recordId = 0x0; // calling code is to implement this
+    resp.header.sdrVersion = ipmiSdrVersion;
+    resp.header.recordType = get_sdr::SENSOR_DATA_FRU_RECORD;
+    resp.header.recordLength = sizeof(resp.body) + sizeof(resp.key) - sizeDiff;
     resp.key.deviceAddress = 0x20;
     resp.key.fruID = device->first;
     resp.key.accessLun = 0x80; // logical / physical fru device
@@ -1863,6 +1929,29 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
 
         sdbusplus::bus::bus bus(ipmid_get_sd_bus_connection());
         std::map<std::string, std::string> addData;
+
+        // Optional richer Redfish-style message via JSON map (if installed).
+        // Returns empty when no row matches; legacy behavior preserved.
+        {
+            uint8_t ed1 = (eventData.size() > 0) ? eventData[0] : 0xFF;
+            uint8_t ed2 = (eventData.size() > 1) ? eventData[1] : 0xFF;
+            uint8_t ed3 = (eventData.size() > 2) ? eventData[2] : 0xFF;
+            std::string mapped =
+                intel_oem::ipmi::sel::SelRedfishMap::instance().format(
+                    generatorID, sensorType, sensorNumber, eventDir, ed1, ed2,
+                    ed3, objpath);
+            if (!mapped.empty())
+            {
+                redfishMessage = mapped;
+                auto [rfId, rfArgs] =
+                    intel_oem::ipmi::sel::SelRedfishMap::splitIdArgs(mapped);
+                addData["REDFISH_MESSAGE_ID"] = rfId;
+                if (!rfArgs.empty())
+                {
+                    addData["REDFISH_MESSAGE_ARGS"] = rfArgs;
+                }
+            }
+        }
         addData["SENSOR_DATA"] = selDataStr.c_str();
         addData["SENSOR_PATH"] = objpath.c_str();
         addData["EVENT_DIR"] = std::to_string(assert);
@@ -1871,6 +1960,32 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         addData["SENSOR_TYPE"] = std::to_string(sensorType);
         addData["EVENT_TYPE"] = std::to_string(eventType);
         addData["SENSOR_NUMBER"] = std::to_string(sensorNumber);
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+        std::shared_ptr<SensorNumMap> sensorNumMapPtr;
+        ::details::getSensorNumMap(sensorNumMapPtr);
+        bool sensorNumValid = false;
+        if (sensorNumMapPtr && (sensorNumMapPtr->left.find(sensorNumber) !=
+                                sensorNumMapPtr->left.end()))
+        {
+            std::string mappedSensorPath =
+                getPathFromSensorNumber(sensorNumber);
+            if (!mappedSensorPath.empty())
+            {
+                uint8_t mappedSensorType =
+                    getSensorTypeFromPath(mappedSensorPath);
+                if (mappedSensorType == sensorType)
+                {
+                    sensorNumValid = true;
+                }
+            }
+        }
+
+        if (!sensorNumValid)
+        {
+            sensorNumber = reservedSensorNumber;
+        }
+        addData["SENSOR_NUM"] = std::to_string(sensorNumber);
+#endif // FEATURE_STATIC_SENSOR_NUMBER
         try
         {
             std::string service =
@@ -2102,17 +2217,17 @@ std::vector<uint8_t> getType8SDRs(
     get_sdr::SensorDataEntityRecord data{};
 
     /* Header */
-    get_sdr::header::set_record_id(recordId, &(data.header));
+    data.header.recordId = recordId;
     // Based on IPMI Spec v2.0 rev 1.1
-    data.header.sdr_version = SDR_VERSION;
-    data.header.record_type = 0x08;
-    data.header.record_length = sizeof(data.key) + sizeof(data.body);
+    data.header.sdrVersion = SDR_VERSION;
+    data.header.recordType = 0x08;
+    data.header.recordLength = sizeof(data.key) + sizeof(data.body);
 
     /* Key */
     data.key.containerEntityId = entity->second.containerEntityId;
     data.key.containerEntityInstance = entity->second.containerEntityInstance;
-    get_sdr::key::set_flags(entity->second.isList, entity->second.isLinked,
-                            &(data.key));
+    get_sdr::key::setFlags(entity->second.isList, entity->second.isLinked,
+                           data.key);
     data.key.entityId1 = entity->second.containedEntities[0].first;
     data.key.entityInstance1 = entity->second.containedEntities[0].second;
 
@@ -2161,11 +2276,10 @@ std::vector<uint8_t> getNMDiscoverySDR(uint16_t index, uint16_t recordId)
     if (index == 0)
     {
         NMDiscoveryRecord nm = {};
-        nm.header.record_id_lsb = recordId;
-        nm.header.record_id_msb = recordId >> 8;
-        nm.header.sdr_version = ipmiSdrVersion;
-        nm.header.record_type = 0xC0;
-        nm.header.record_length = 0xB;
+        nm.header.recordId = recordId;
+        nm.header.sdrVersion = ipmiSdrVersion;
+        nm.header.recordType = 0xC0;
+        nm.header.recordLength = 0xB;
         nm.oemID0 = 0x57;
         nm.oemID1 = 0x1;
         nm.oemID2 = 0x0;
@@ -2196,8 +2310,9 @@ void initFruConfig()
     auto dbus = getSdBus();
     using GetSubTreePathsType = std::vector<std::string>;
     auto method = dbus->new_method_call(
-        ipmi::sel::mapperBusName, ipmi::sel::mapperObjPath,
-        ipmi::sel::mapperIntf, "GetSubTreePaths");
+        "xyz.openbmc_project.ObjectMapper",
+        "/xyz/openbmc_project/object_mapper",
+        "xyz.openbmc_project.ObjectMapper", "GetSubTreePaths");
     method.append("/", 0,
                   std::array<const char*, 1>{
                       "xyz.openbmc_project.Inventory.Item.FruConfig"});

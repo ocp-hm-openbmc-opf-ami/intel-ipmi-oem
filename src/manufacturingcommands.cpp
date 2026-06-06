@@ -103,20 +103,20 @@ ipmi_ret_t ledStoreAndSet(SmSignalSet signal, const std::string& setState)
     LedProperty* ledProp = mtm.findLedProperty(signal);
     if (ledProp == nullptr)
     {
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ipmi::ccInvalidFieldRequest;
     }
 
     std::string ledName = ledProp->getName();
-    std::string ledService = ledServicePrefix + ledName;
+    std::string ledServiceName = ledService;
     std::string ledPath = ledPathPrefix + ledName;
     ipmi::Value presentState;
 
     if (false == ledProp->getLock())
     {
-        if (mtm.getProperty(ledService.c_str(), ledPath.c_str(), ledIntf,
+        if (mtm.getProperty(ledServiceName.c_str(), ledPath.c_str(), ledIntf,
                             "State", &presentState) != 0)
         {
-            return IPMI_CC_UNSPECIFIED_ERROR;
+            return ipmi::ccUnspecifiedError;
         }
         ledProp->setPrevState(std::get<std::string>(presentState));
         ledProp->setLock(true);
@@ -126,12 +126,12 @@ ipmi_ret_t ledStoreAndSet(SmSignalSet signal, const std::string& setState)
             mtm.revertLedCallback = true;
         }
     }
-    if (mtm.setProperty(ledService, ledPath, ledIntf, "State",
+    if (mtm.setProperty(ledServiceName, ledPath, ledIntf, "State",
                         ledStateStr + setState) != 0)
     {
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ipmi::ccUnspecifiedError;
     }
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 ipmi_ret_t ledRevert(SmSignalSet signal)
@@ -139,7 +139,7 @@ ipmi_ret_t ledRevert(SmSignalSet signal)
     LedProperty* ledProp = mtm.findLedProperty(signal);
     if (ledProp == nullptr)
     {
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ipmi::ccInvalidFieldRequest;
     }
     if (true == ledProp->getLock())
     {
@@ -155,23 +155,23 @@ ipmi_ret_t ledRevert(SmSignalSet signal)
             }
             catch (const sdbusplus::exception_t& e)
             {
-                return IPMI_CC_UNSPECIFIED_ERROR;
+                return ipmi::ccUnspecifiedError;
             }
             mtm.revertLedCallback = false;
         }
         else
         {
             std::string ledName = ledProp->getName();
-            std::string ledService = ledServicePrefix + ledName;
+            std::string ledServiceName = ledService;
             std::string ledPath = ledPathPrefix + ledName;
-            if (mtm.setProperty(ledService, ledPath, ledIntf, "State",
+            if (mtm.setProperty(ledServiceName, ledPath, ledIntf, "State",
                                 ledProp->getPrevState()) != 0)
             {
-                return IPMI_CC_UNSPECIFIED_ERROR;
+                return ipmi::ccUnspecifiedError;
             }
         }
     }
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 void Manufacturing::initData()
@@ -340,7 +340,7 @@ static bool findPwmName(ipmi::Context::ptr& ctx, uint8_t instance,
                 {
                     return false;
                 }
-                pwmName = "Pwm_" + std::to_string(*fanPwm + 1);
+                pwmName = "Pwm_" + std::to_string(*fanPwm);
                 return true;
             }
         }
@@ -376,16 +376,21 @@ ipmi::RspType<uint8_t,                // Signal value
             }
 
             uint8_t status = 0;
-            if (!intrusionStatus->compare("Normal"))
+            if (!intrusionStatus->compare(
+                    "xyz.openbmc_project.Chassis.Intrusion.Status.Normal"))
             {
                 status = static_cast<uint8_t>(IntrusionStatus::normal);
             }
-            else if (!intrusionStatus->compare("HardwareIntrusion"))
+            else if (
+                !intrusionStatus->compare(
+                    "xyz.openbmc_project.Chassis.Intrusion.Status.HardwareIntrusion"))
             {
                 status =
                     static_cast<uint8_t>(IntrusionStatus::hardwareIntrusion);
             }
-            else if (!intrusionStatus->compare("TamperingDetected"))
+            else if (
+                !intrusionStatus->compare(
+                    "xyz.openbmc_project.Chassis.Intrusion.Status.TamperingDetected"))
             {
                 status =
                     static_cast<uint8_t>(IntrusionStatus::tamperingDetected);
@@ -400,10 +405,10 @@ ipmi::RspType<uint8_t,                // Signal value
         {
             ipmi::Value reply;
             std::string pwmName, fullPath;
-            if (!findPwmName(ctx, instance + 1, pwmName))
+            if (!findPwmName(ctx, instance, pwmName))
             {
                 // The default PWM name is Pwm_#
-                pwmName = "Pwm_" + std::to_string(instance + 1);
+                pwmName = "Pwm_" + std::to_string(instance);
             }
             fullPath = fanPwmPath + pwmName;
             if (mtm.getProperty(fanService, fullPath, fanIntf, "Value",
@@ -665,9 +670,9 @@ ipmi::RspType<> appMTMSetSignal(ipmi::Context::ptr ctx, uint8_t signalTypeByte,
                     }
                     mtm.revertTimer.start(revertTimeOut);
                     std::string pwmName, fanPwmInstancePath;
-                    if (!findPwmName(ctx, instance + 1, pwmName))
+                    if (!findPwmName(ctx, instance, pwmName))
                     {
-                        pwmName = "Pwm_" + std::to_string(instance + 1);
+                        pwmName = "Pwm_" + std::to_string(instance);
                     }
                     fanPwmInstancePath = fanPwmPath + pwmName;
                     ret =
@@ -765,7 +770,7 @@ ipmi::RspType<> appMTMSetSignal(ipmi::Context::ptr ctx, uint8_t signalTypeByte,
                 return ipmi::responseUnspecifiedError();
             }
             std::string driveObjPath =
-                driveBasePath + "Drive_" + std::to_string(instance + 1);
+                driveBasePath + "Drive_" + std::to_string(instance);
             if (std::find(driveList.begin(), driveList.end(), driveObjPath) ==
                 driveList.end())
             {
@@ -1152,10 +1157,14 @@ ipmi::RspType<uint8_t, std::array<uint8_t, maxEthSize>> getManufacturingData(
     std::string ethStr;
     iEthFile >> ethStr;
     uint8_t* data = ethData.data();
-    std::sscanf(ethStr.c_str(), "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
-                data, (data + 1), (data + 2), (data + 3), (data + 4),
-                (data + 5));
-
+    int ret = std::sscanf(
+        ethStr.c_str(), "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx", data,
+        (data + 1), (data + 2), (data + 3), (data + 4), (data + 5));
+    if (ret != 6)
+    {
+        lg2::error("Failed to parse MAC address: {MAC}", "MAC", ethStr.c_str());
+        return ipmi::responseSuccess(invalidData, ethData);
+    }
     resetMtmTimer(ctx);
     return ipmi::responseSuccess(validData, ethData);
 }
@@ -1281,7 +1290,7 @@ ipmi::RspType<> clearCMOS()
     constexpr uint8_t targetAddr = 0x38;
     std::string i2cBus = "/dev/i2c-4";
     std::vector<uint8_t> writeData = {0x61, 0x1};
-    std::vector<uint8_t> readBuf(0);
+    std::vector<uint8_t> readBuf{};
 
     ipmi::Cc retI2C =
         ipmi::i2cWriteRead(i2cBus, targetAddr, writeData, readBuf);

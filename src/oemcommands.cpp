@@ -36,8 +36,8 @@
 #include <appcommands.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/container/flat_map.hpp>
-#include <boost/process/child.hpp>
-#include <boost/process/io.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/io.hpp>
 #include <com/intel/Control/OCOTShutdownPolicy/server.hpp>
 #include <commandutils.hpp>
 #include <gpiod.hpp>
@@ -60,6 +60,8 @@
 #include <xyz/openbmc_project/Network/FirewallConfiguration/server.hpp>
 #include <xyz/openbmc_project/Software/Activation/server.hpp>
 #include <xyz/openbmc_project/Software/Version/server.hpp>
+
+#include <random>
 /*TODO: enable once phosphor-dbus-interface patch updated
 #include <xyz/openbmc_project/USB/status/server.hpp>
 */
@@ -75,6 +77,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <regex>
 #include <set>
 #include <string>
@@ -187,6 +190,18 @@ const static constexpr char* settingsObjPath =
     "/xyz/openbmc_project/logging/settings";
 const static constexpr char* settingsUSBIntf = "xyz.openbmc_project.USB";
 
+// USB Power Save Mode Commands
+#define POWERSAVE_MODE_ENABLE 0x00
+#define POWERSAVE_MODE_DISABLE 0x01
+#define BIOS_COMM_START 0x10
+#define BIOS_COMM_END 0x11
+
+// BIOS communication lock for power save mode
+// Initialize from flag file so service restarts don't lose lock state
+#define BIOS_BMC_COMMUNICATION_STATUS "/var/tmp/bioscomm"
+static bool biosPowerSaveModeLocked =
+    std::filesystem::exists(BIOS_BMC_COMMUNICATION_STATUS);
+
 const static constexpr char* snmpService = "xyz.openbmc_project.Snmp.Conf";
 const static constexpr char* snmpObjPath =
     "/xyz/openbmc_project/snmp/SnmpUtils";
@@ -267,13 +282,35 @@ static constexpr const char* dBusPropertyIntf =
 static constexpr const char* dBusPropertyGetMethod = "Get";
 static constexpr const char* dBusPropertySetMethod = "Set";
 
-constexpr const char* MAPPER_PATH = "/xyz/openbmc_project/object_mapper";
-constexpr const char* MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
+constexpr const char* OBJMAPPER_SERVICE = "xyz.openbmc_project.ObjectMapper";
+constexpr const char* OBJMAPPER_PATH = "/xyz/openbmc_project/object_mapper";
+constexpr const char* OBJMAPPER_IFACE = "xyz.openbmc_project.ObjectMapper";
 
 constexpr const char* PRESERVE_ROOT =
     "/xyz/openbmc_project/inventory/system/configuration";
 constexpr const char* PRESERVE_INTERFACE =
     "xyz.openbmc_project.Configuration.Preserve";
+
+constexpr const char* FWUPDATE_SERVICE =
+    "xyz.openbmc_project.Software.BMC.Updater";
+constexpr const char* FWUPDATE_SOFTWARE_ROOT = "/xyz/openbmc_project/software";
+constexpr const char* FWUPDATE_VERSION_IFACE =
+    "xyz.openbmc_project.Software.Version";
+constexpr const char* FWUPDATE_BOOT_PROGRESS_IFACE =
+    "xyz.openbmc_project.Software.ActivationProgress";
+constexpr const char* FWUPDATE_TARGET_IFACE =
+    "xyz.openbmc_project.Software.FirmwareUpdateTarget";
+constexpr const char* FWUPDATE_TARGET_PROP = "HttpPushUriTargets";
+constexpr const char* FWUPDATE_TARGET_BUSY_PROP = "HttpPushUriTargetsBusy";
+constexpr const char* FWUPDATE_TASK_IFACE = "xyz.openbmc_project.Common.Task";
+
+constexpr const char* FWUPDATE_APPLYTIME_SERVICE =
+    "xyz.openbmc_project.Settings";
+constexpr const char* FWUPDATE_APPLYTIME_OBJPATH =
+    "/xyz/openbmc_project/software/apply_time";
+constexpr const char* FWUPDATE_APPLYTIME_IFACE =
+    "xyz.openbmc_project.Software.ApplyTime";
+constexpr const char* FWUPDATE_REQ_APPLY_PROP = "RequestedApplyTime";
 
 #define MAX_PRESERVE_CONFIGS 18
 
@@ -319,6 +356,34 @@ const std::unordered_map<std::string, ConfigName> configNameMap = {
     {"SMTP", ConfigName::SMTP},
     {"SNMP", ConfigName::SNMP},
     {"ServiceManager", ConfigName::ServiceManager}};
+
+static const std::map<std::string, int8_t> TaskStatusCodeMap = {
+    {"xyz.openbmc_project.Common.Task.OperationStatus.InProgress", 1},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Completed", 2},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Failed", 3},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Aborted", 4},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.New", 5},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Starting", 6},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Running", 7},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Suspended", 8},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Pending", 9},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Cancelling", 10},
+    {"xyz.openbmc_project.Common.Task.OperationStatus.Cancelled", 11},
+};
+
+enum class RequestedApplyTimes : uint8_t
+{
+    Immediate = 1,
+    OnReset = 2,
+    AtMaintenanceWindowStart = 3,
+    InMaintenanceWindowOnReset = 4
+};
+
+static const std::vector<std::string> ApplyTimeDbusStrings = {
+    "xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes.Immediate",
+    "xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes.OnReset",
+    "xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes.AtMaintenanceWindowStart",
+    "xyz.openbmc_project.Software.ApplyTime.RequestedApplyTimes.InMaintenanceWindowOnReset"};
 
 // return code: 0 successful
 int8_t getChassisSerialNumber(sdbusplus::bus_t& bus, std::string& serial)
@@ -471,7 +536,7 @@ void writefifo(const uint8_t cmdReg, const uint8_t val)
     // Based on the spec, writing cmdReg to address val on this device, will
     // trigger the write FIFO operation.
     std::vector<uint8_t> writeData = {cmdReg, val};
-    std::vector<uint8_t> readBuf(0);
+    std::vector<uint8_t> readBuf{};
     ipmi::Cc retI2C =
         ipmi::i2cWriteRead(i2cBus, targetAddr, writeData, readBuf);
     if (retI2C)
@@ -529,7 +594,7 @@ ipmi_ret_t ipmiOEMGetChassisIdentifier(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
     if (*dataLen != 0) // invalid request if there are extra parameters
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
     if (getChassisSerialNumber(*dbus, serial) == 0)
@@ -538,10 +603,10 @@ ipmi_ret_t ipmiOEMGetChassisIdentifier(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
                                   // as it is checked in getChassisSerialNumber
         char* resp = static_cast<char*>(response);
         serial.copy(resp, *dataLen);
-        return IPMI_CC_OK;
+        return ipmi::ccSuccess;
     }
     *dataLen = 0;
-    return IPMI_CC_RESPONSE_ERROR;
+    return ipmi::ccResponseError;
 }
 
 ipmi_ret_t ipmiOEMSetSystemGUID(ipmi_netfn_t, ipmi_cmd_t,
@@ -555,7 +620,7 @@ ipmi_ret_t ipmiOEMSetSystemGUID(ipmi_netfn_t, ipmi_cmd_t,
     if (*dataLen != sizeof(GUIDData)) // 16bytes
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
 
     *dataLen = 0;
@@ -575,7 +640,7 @@ ipmi_ret_t ipmiOEMSetSystemGUID(ipmi_netfn_t, ipmi_cmd_t,
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
     std::string service = getService(*dbus, intf, objpath);
     setDbusProperty(*dbus, service, objpath, intf, "UUID", guid);
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 ipmi::RspType<> ipmiOEMDisableBMCSystemReset(bool disableResetOnSMI,
@@ -644,7 +709,7 @@ ipmi_ret_t ipmiOEMSetBIOSID(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t request,
     if ((*dataLen < 2ul) || (*dataLen != (1ul + data->biosIDLength)))
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
     std::string idString((char*)data->biosId, data->biosIDLength);
     for (auto idChar : idString)
@@ -653,7 +718,7 @@ ipmi_ret_t ipmiOEMSetBIOSID(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t request,
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "BIOS ID contains non printable character");
-            return IPMI_CC_INVALID_FIELD_REQUEST;
+            return ipmi::ccInvalidFieldRequest;
         }
     }
 
@@ -665,7 +730,7 @@ ipmi_ret_t ipmiOEMSetBIOSID(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t request,
     *bytesWritten =
         data->biosIDLength; // how many bytes are written into storage
     *dataLen = 1;
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 bool getActiveHSCSoftwareVersionInfo(std::string& hscVersion, size_t hscNumber)
@@ -895,7 +960,7 @@ ipmi_ret_t ipmiOEMGetAICFRU(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
     if (*dataLen != 0)
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
 
     *dataLen = 1;
@@ -904,7 +969,7 @@ ipmi_ret_t ipmiOEMGetAICFRU(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
     // AIC is available so that BIOS will not timeout repeatly which leads to
     // slow booting.
     *res = 0; // Byte1=Count of SlotPosition/FruID records.
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 ipmi_ret_t ipmiOEMGetPowerRestoreDelay(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
@@ -917,7 +982,7 @@ ipmi_ret_t ipmiOEMGetPowerRestoreDelay(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
     if (*dataLen != 0)
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
 
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
@@ -935,7 +1000,7 @@ ipmi_ret_t ipmiOEMGetPowerRestoreDelay(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
 
     *dataLen = sizeof(GetPowerRestoreDelayRes);
 
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 static uint8_t bcdToDec(uint8_t val)
@@ -1072,7 +1137,7 @@ ipmi::RspType<uint8_t, std::vector<uint8_t>> ipmiOEMSlotIpmb(
         return ipmi::responseUnspecifiedError();
     }
 
-    std::vector<uint8_t> dataReceived(0);
+    std::vector<uint8_t> dataReceived{};
     int status = -1;
     uint8_t resNetFn = 0, resLun = 0, resCmd = 0, cc = 0;
 
@@ -1098,11 +1163,11 @@ ipmi_ret_t ipmiOEMSetPowerRestoreDelay(ipmi_netfn_t, ipmi_cmd_t,
     if (*dataLen != sizeof(SetPowerRestoreDelayReq))
     {
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
     delay = data->byteMSB;
     delay = (delay << 8) | data->byteLSB;
-    uint64_t val = delay * 1000000;
+    uint64_t val = delay * 1000000ULL;
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
     std::string service =
         getService(*dbus, powerRestoreDelayIntf, powerRestoreDelayObjPath);
@@ -1110,7 +1175,7 @@ ipmi_ret_t ipmiOEMSetPowerRestoreDelay(ipmi_netfn_t, ipmi_cmd_t,
                     powerRestoreDelayIntf, powerRestoreDelayProp, val);
     *dataLen = 0;
 
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 static bool cpuPresent(const std::string& cpuName)
@@ -1282,7 +1347,7 @@ ipmi_ret_t ipmiOEMGetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "oem_get_shutdown_policy: invalid input len!");
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
 
     *dataLen = 0;
@@ -1316,7 +1381,7 @@ ipmi_ret_t ipmiOEMGetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
                 "oem_set_shutdown_policy: invalid property!",
                 phosphor::logging::entry(
                     "PROP=%s", std::get<std::string>(variant).c_str()));
-            return IPMI_CC_UNSPECIFIED_ERROR;
+            return ipmi::ccUnspecifiedError;
         }
         // TODO needs to check if it is multi-node products,
         // policy is only supported on node 3/4
@@ -1325,11 +1390,11 @@ ipmi_ret_t ipmiOEMGetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t, ipmi_request_t,
     catch (const sdbusplus::exception_t& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(e.description());
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ipmi::ccUnspecifiedError;
     }
 
     *dataLen = sizeof(GetOEMShutdownPolicyRes);
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 ipmi_ret_t ipmiOEMSetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t,
@@ -1348,7 +1413,7 @@ ipmi_ret_t ipmiOEMSetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t,
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "oem_set_shutdown_policy: invalid input len!");
         *dataLen = 0;
-        return IPMI_CC_REQ_DATA_LEN_INVALID;
+        return ipmi::ccReqDataLenInvalid;
     }
 
     *dataLen = 0;
@@ -1356,7 +1421,7 @@ ipmi_ret_t ipmiOEMSetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t,
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(
             "oem_set_shutdown_policy: invalid input!");
-        return IPMI_CC_INVALID_FIELD_REQUEST;
+        return ipmi::ccInvalidFieldRequest;
     }
 
     if (*req == noShutdownOnOCOT)
@@ -1383,10 +1448,10 @@ ipmi_ret_t ipmiOEMSetShutdownPolicy(ipmi_netfn_t, ipmi_cmd_t,
     catch (const sdbusplus::exception_t& e)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>(e.description());
-        return IPMI_CC_UNSPECIFIED_ERROR;
+        return ipmi::ccUnspecifiedError;
     }
 
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 /** @brief implementation for check the DHCP or not in IPv4
@@ -1590,7 +1655,7 @@ ipmi::RspType<> ipmiOEMSetUser2Activation(
 
 static uint8_t executeCmd(const char* path)
 {
-    boost::process::child execProg(path);
+    boost::process::v1::child execProg(path);
     execProg.wait();
 
     int retCode = execProg.exit_code();
@@ -1787,16 +1852,17 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
                         "CfgHostSerial: invalid input len!");
                 }
                 *dataLen = 0;
-                return IPMI_CC_REQ_DATA_LEN_INVALID;
+                return ipmi::ccReqDataLenInvalid;
             }
 
             *dataLen = 0;
 
-            boost::process::ipstream is;
+            boost::process::v1::ipstream is;
             std::vector<std::string> data;
             std::string line;
-            boost::process::child c1(fwGetEnvCmd, "-n", fwHostSerailCfgEnvName,
-                                     boost::process::std_out > is);
+            boost::process::v1::child c1(fwGetEnvCmd, "-n",
+                                         fwHostSerailCfgEnvName,
+                                         boost::process::v1::std_out > is);
 
             while (c1.running() && std::getline(is, line) && !line.empty())
             {
@@ -1840,14 +1906,14 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
                     phosphor::logging::log<phosphor::logging::level::ERR>(
                         "invalid config ",
                         phosphor::logging::entry("ERR=%s", e.what()));
-                    return IPMI_CC_UNSPECIFIED_ERROR;
+                    return ipmi::ccUnspecifiedError;
                 }
                 catch (const std::out_of_range& e)
                 {
                     phosphor::logging::log<phosphor::logging::level::ERR>(
                         "out_of_range config ",
                         phosphor::logging::entry("ERR=%s", e.what()));
-                    return IPMI_CC_UNSPECIFIED_ERROR;
+                    return ipmi::ccUnspecifiedError;
                 }
             }
 
@@ -1864,7 +1930,7 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
                         "CfgHostSerial: invalid input len!");
                 }
                 *dataLen = 0;
-                return IPMI_CC_REQ_DATA_LEN_INVALID;
+                return ipmi::ccReqDataLenInvalid;
             }
 
             *dataLen = 0;
@@ -1879,8 +1945,8 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
                 return IPMI_CC_INVALID_FIELD_REQUEST;
             }
 
-            boost::process::child c1(fwSetEnvCmd, fwHostSerailCfgEnvName,
-                                     std::to_string(req->parameter));
+            boost::process::v1::child c1(fwSetEnvCmd, fwHostSerailCfgEnvName,
+                                         std::to_string(req->parameter));
 
             c1.wait();
             if (c1.exit_code())
@@ -1902,10 +1968,10 @@ ipmi_ret_t ipmiOEMCfgHostSerialPortSpeed(
                     "CfgHostSerial: invalid input!");
             }
             *dataLen = 0;
-            return IPMI_CC_INVALID_FIELD_REQUEST;
+            return ipmi::ccInvalidFieldRequest;
     }
 
-    return IPMI_CC_OK;
+    return ipmi::ccSuccess;
 }
 
 constexpr const char* thermalModeInterface =
@@ -2477,7 +2543,7 @@ ipmi::RspType<
         {
             phosphor::logging::log<phosphor::logging::level::ERR>(
                 "ipmiOEMGetFscParameter: invalid input len!");
-            return IPMI_CC_REQ_DATA_LEN_INVALID;
+            return ipmi::ccReqDataLenInvalid;
         }
         */
         Value cfmLimit;
@@ -6325,7 +6391,7 @@ bool isValidUserName(ipmi::Context::ptr ctx, const std::string& userName)
         return false;
     }
     if (!std::regex_match(userName.c_str(),
-                          std::regex("[a-zA-z_][a-zA-Z_0-9]*")))
+                          std::regex("^[a-zA-Z0-9_.*]{1,16}$")))
     {
         phosphor::logging::log<level::ERR>("Unsupported characters in string");
         return false;
@@ -6450,7 +6516,9 @@ std::string generateRandomPassword()
     }
 
     randFp.close();
-    std::random_shuffle(password.begin(), password.end()); // Shuffle characters
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(password.begin(), password.end(), g); // Shuffle characters
 
     return password;
 }
@@ -6755,34 +6823,178 @@ ipmi::RspType<> ipmiOEMEnDisPwrSaveMode(std::optional<uint8_t> req)
         return ipmi::responseReqDataLenInvalid();
     }
 
-    if ((*req) != 0 && (*req) != 1)
+    // Handle regular user commands (0 and 1)
+    if ((*req) == POWERSAVE_MODE_ENABLE || (*req) == POWERSAVE_MODE_DISABLE)
     {
-        return ipmi::responseInvalidFieldRequest();
-    }
-
-    std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
-
-    auto method = dbus->new_method_call(settingsService, settingsObjPath,
-                                        settingsUSBIntf, "SetUSBPowerSaveMode");
-
-    method.append(static_cast<int>(*req));
-    try
-    {
-        auto data = dbus->call(method);
-        data.read(resp);
-        if (resp == 0xC0 || resp < 0)
+        // Check if BIOS has locked the power save mode for user commands
+        if (biosPowerSaveModeLocked)
         {
-            phosphor::logging::log<phosphor::logging::level::ERR>(
-                "ipmiOEMEnDisPwrSaveMode: Error - Busy node or ioctl failed");
             return ipmi::response(ipmi::ccBusy);
         }
+
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+        auto method =
+            dbus->new_method_call(settingsService, settingsObjPath,
+                                  settingsUSBIntf, "SetUSBPowerSaveMode");
+
+        method.append(static_cast<int>(*req));
+        try
+        {
+            auto data = dbus->call(method);
+            data.read(resp);
+            if (resp == 0xC0 || resp < 0)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>(
+                    "ipmiOEMEnDisPwrSaveMode: Error - Busy node or ioctl failed");
+                return ipmi::response(ipmi::ccBusy);
+            }
+        }
+        catch (sdbusplus::exception_t& e)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(e.what());
+            return ipmi::response(ipmi::ccUnspecifiedError);
+        }
+        return ipmi::responseSuccess();
     }
-    catch (const sdbusplus::exception_t& e)
+    // Handle BIOS BMC Communication responses
+    else if ((*req) ==
+             BIOS_COMM_START) // BIOS disable power save mode for communication
     {
-        std::cerr << "SetUSBPowerSaveMode method call failed \n";
-        return ipmi::response(ipmi::ccUnspecifiedError);
+        if (biosPowerSaveModeLocked)
+        {
+            return ipmi::response(ipmi::ccBusy); // Already active
+        }
+
+        biosPowerSaveModeLocked = true;
+
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+        // Get device status first
+        auto getMethod =
+            dbus->new_method_call(settingsService, settingsObjPath,
+                                  settingsUSBIntf, "GetUSBPowerSaveMode");
+        int currentStatus = 0;
+        try
+        {
+            auto getData = dbus->call(getMethod);
+            getData.read(currentStatus);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            // Reset lock so BIOS_COMM_START can be retried
+            biosPowerSaveModeLocked = false;
+            return ipmi::response(ipmi::ccUnspecifiedError);
+        }
+
+        // If status == 1 then power save mode is ON (devices disabled), disable
+        // power save mode to enable them
+        if (currentStatus == 1)
+        {
+            auto method =
+                dbus->new_method_call(settingsService, settingsObjPath,
+                                      settingsUSBIntf, "SetUSBPowerSaveMode");
+            method.append(static_cast<int>(
+                0)); // Disable power save mode (enable USB devices)
+
+            try
+            {
+                auto data = dbus->call(method);
+                data.read(resp);
+                if (resp == 0xC0 || resp < 0)
+                {
+                    // Reset lock so BIOS_COMM_START can be retried
+                    biosPowerSaveModeLocked = false;
+                    return ipmi::response(ipmi::ccBusy);
+                }
+            }
+            catch (const sdbusplus::exception_t& e)
+            {
+                // Reset lock so BIOS_COMM_START can be retried
+                biosPowerSaveModeLocked = false;
+                return ipmi::response(ipmi::ccUnspecifiedError);
+            }
+        }
+        // If status == 0, power save mode already OFF (devices already enabled)
+        // - return success
+
+        // Create file flag to indicate BIOS communication is active
+        std::ofstream(BIOS_BMC_COMMUNICATION_STATUS).close();
+
+        return ipmi::responseSuccess();
     }
-    return ipmi::responseSuccess();
+    else if ((*req) ==
+             BIOS_COMM_END) // BIOS enable power save mode after communication
+    {
+        if (!biosPowerSaveModeLocked)
+        {
+            return ipmi::response(ipmi::ccInvalidFieldRequest); // Not active
+        }
+
+        // Do NOT clear biosPowerSaveModeLocked yet — keep it true so that
+        // if any step below fails, BIOS_COMM_END can be retried.
+
+        std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+        // Get device status first
+        auto getMethod =
+            dbus->new_method_call(settingsService, settingsObjPath,
+                                  settingsUSBIntf, "GetUSBPowerSaveMode");
+        int currentStatus = 0;
+        try
+        {
+            auto getData = dbus->call(getMethod);
+            getData.read(currentStatus);
+        }
+        catch (const sdbusplus::exception_t& e)
+        {
+            return ipmi::response(ipmi::ccUnspecifiedError);
+        }
+
+        // If status == 0 then power save mode is OFF (devices enabled), enable
+        // power save mode to disable them
+        if (currentStatus == 0)
+        {
+            // Remove file flag first so that SetUSBPowerSaveMode is not blocked
+            // by the BIOS communication guard in the settings service
+            unlink(BIOS_BMC_COMMUNICATION_STATUS);
+
+            auto method =
+                dbus->new_method_call(settingsService, settingsObjPath,
+                                      settingsUSBIntf, "SetUSBPowerSaveMode");
+            method.append(static_cast<int>(
+                1)); // Enable power save mode (disable USB devices)
+
+            try
+            {
+                auto data = dbus->call(method);
+                data.read(resp);
+                if (resp == 0xC0 || resp < 0)
+                {
+                    return ipmi::response(ipmi::ccBusy);
+                }
+            }
+            catch (const sdbusplus::exception_t& e)
+            {
+                return ipmi::response(ipmi::ccUnspecifiedError);
+            }
+        }
+        else
+        {
+            // If status == 1, power save mode already ON (devices already
+            // disabled) - just remove the flag
+            unlink(BIOS_BMC_COMMUNICATION_STATUS);
+        }
+
+        // All steps succeeded — clear the lock
+        biosPowerSaveModeLocked = false;
+        return ipmi::responseSuccess();
+    }
+    else
+    {
+        // It's an invalid command
+        return ipmi::responseInvalidFieldRequest();
+    }
 }
 
 ipmi::RspType<uint8_t> ipmiOEMGetPwrSaveMode()
@@ -7191,15 +7403,14 @@ ipmi::RspType<uint8_t> ipmiOEMClearSessionInfo()
 
     auto method =
         dbus->new_method_call(sessionManagerService, sessionManagerObjPath,
-                              sessionManagerIntf, "Clear");
-
+                              sessionManagerIntf, "ClearAll");
     try
     {
         auto data = dbus->call(method);
         data.read(resp);
         if (resp == false)
         {
-            return ipmi::response(ipmi::ccUnspecifiedError);
+            return ipmi::response(ipmi::ipmiRequestedSessionNotAvailable);
         }
     }
     catch (sdbusplus::exception_t& e)
@@ -7565,6 +7776,81 @@ ipmi::RspType<bool, uint7_t, uint8_t, uint8_t> ipmiOEMGetExtlogConfigs()
     return ipmi::responseSuccess(ExtlogStatus, 0, LogLevel, ReqResLogLevel);
 }
 
+std::string getActivationObjectPath(sdbusplus::bus::bus& bus)
+{
+    auto method = bus.new_method_call(OBJMAPPER_SERVICE, OBJMAPPER_PATH,
+                                      OBJMAPPER_IFACE, "GetSubTreePaths");
+    method.append(FWUPDATE_SOFTWARE_ROOT, 2,
+                  std::vector<std::string>{FWUPDATE_BOOT_PROGRESS_IFACE});
+
+    auto reply = bus.call(method);
+    std::vector<std::string> paths;
+    reply.read(paths);
+
+    if (paths.empty())
+    {
+        throw std::runtime_error("No object found for Firmware Update");
+    }
+    return paths.front();
+}
+
+ipmi::RspType<uint8_t, uint8_t> ipmiOEMGetFWupdateProgress(
+    ipmi::Context::ptr ctx)
+{
+    uint8_t progress = 0xFF;
+    int8_t statusCode = 0;
+
+    std::string objPath;
+    try
+    {
+        objPath = getActivationObjectPath(*ctx->bus);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to get Firmware Update Dbus object path: {ERROR}",
+                   "ERROR", e.what());
+        return ipmi::responseSuccess(statusCode, progress);
+    }
+
+    try
+    {
+        {
+            auto method = ctx->bus->new_method_call(
+                FWUPDATE_SERVICE, objPath.c_str(),
+                "org.freedesktop.DBus.Properties", "Get");
+            method.append(FWUPDATE_BOOT_PROGRESS_IFACE, "Progress");
+
+            auto reply = ctx->bus->call(method);
+            std::variant<uint8_t> value;
+            reply.read(value);
+            progress = std::get<uint8_t>(value);
+        }
+
+        {
+            auto method = ctx->bus->new_method_call(
+                FWUPDATE_SERVICE, objPath.c_str(),
+                "org.freedesktop.DBus.Properties", "Get");
+            method.append(FWUPDATE_TASK_IFACE);
+            method.append("Status");
+            auto reply = ctx->bus->call(method);
+            std::variant<std::string> vStatus;
+            reply.read(vStatus);
+            const std::string& s = std::get<std::string>(vStatus);
+            auto it = TaskStatusCodeMap.find(s);
+            if (it != TaskStatusCodeMap.end())
+                statusCode = it->second;
+        }
+
+        return ipmi::responseSuccess(statusCode, progress);
+    }
+    catch (const std::exception& e)
+    {
+        log<level::ERR>("Failed to get firmware update progress data",
+                        entry("ERR=%s", e.what()));
+        return ipmi::responseSuccess(statusCode, progress);
+    }
+}
+
 ConfigName getConfigName(const std::string& name)
 {
     auto it = configNameMap.find(name);
@@ -7577,8 +7863,8 @@ ConfigName getConfigName(const std::string& name)
 
 uint32_t getPreserveConfig(sdbusplus::bus::bus& bus)
 {
-    auto call = bus.new_method_call(MAPPER_INTERFACE, MAPPER_PATH,
-                                    MAPPER_INTERFACE, "GetSubTreePaths");
+    auto call = bus.new_method_call(OBJMAPPER_SERVICE, OBJMAPPER_PATH,
+                                    OBJMAPPER_IFACE, "GetSubTreePaths");
 
     call.append(PRESERVE_ROOT, 0, std::vector<std::string>{PRESERVE_INTERFACE});
 
@@ -7627,8 +7913,8 @@ uint32_t getPreserveConfig(sdbusplus::bus::bus& bus)
 
 void setPreserveConfig(sdbusplus::bus::bus& bus, uint32_t preserveBits)
 {
-    auto call = bus.new_method_call(MAPPER_INTERFACE, MAPPER_PATH,
-                                    MAPPER_INTERFACE, "GetSubTreePaths");
+    auto call = bus.new_method_call(OBJMAPPER_SERVICE, OBJMAPPER_PATH,
+                                    OBJMAPPER_IFACE, "GetSubTreePaths");
 
     call.append(PRESERVE_ROOT, 0, std::vector<std::string>{PRESERVE_INTERFACE});
 
@@ -7706,6 +7992,277 @@ ipmi::RspType<> ipmiOEMSetPreserveConfig(uint32_t preserve)
                         entry("ERR=%s", e.what()));
         return ipmi::responseUnspecifiedError();
     }
+}
+
+static std::vector<std::string> getFwTargetLeafNames(sdbusplus::bus::bus& bus)
+{
+    std::vector<std::string> result;
+    try
+    {
+        std::vector<std::string> interfaces{FWUPDATE_VERSION_IFACE};
+        std::vector<std::string> objectPaths;
+
+        auto method = bus.new_method_call(OBJMAPPER_SERVICE, OBJMAPPER_PATH,
+                                          OBJMAPPER_IFACE, "GetSubTreePaths");
+        method.append(std::string(FWUPDATE_SOFTWARE_ROOT));
+        method.append(int32_t(1));
+        method.append(interfaces);
+
+        auto reply = bus.call(method);
+        reply.read(objectPaths);
+
+        for (const auto& objPath : objectPaths)
+        {
+            auto pos = objPath.rfind('/');
+
+            if (pos == std::string::npos || pos + 1 >= objPath.size())
+                continue;
+
+            std::string leaf = objPath.substr(pos + 1);
+            if (!leaf.empty())
+                result.push_back(leaf);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to get Firmware update targets {ERROR}", "ERROR",
+                   e.what());
+    }
+    return result;
+}
+
+static std::vector<uint8_t> stringListToPayload(
+    const std::vector<std::string>& strs)
+{
+    std::vector<uint8_t> payload;
+    for (const auto& s : strs)
+    {
+        payload.insert(payload.end(), s.begin(), s.end());
+        payload.push_back('\0');
+    }
+    return payload;
+}
+
+ipmi::RspType<uint8_t, std::vector<uint8_t>> ipmiOEMGetFWupdateTargets(
+    ipmi::Context::ptr ctx, uint8_t selector)
+{
+    std::vector<std::string> resultTargets;
+
+    if (selector == 0)
+    {
+        resultTargets = getFwTargetLeafNames(*ctx->bus);
+
+        if (resultTargets.empty())
+        {
+            lg2::error("Firmware update targets is empty");
+            return ipmi::responseUnspecifiedError();
+        }
+
+        return ipmi::responseSuccess(resultTargets.size(),
+                                     stringListToPayload(resultTargets));
+    }
+    else if (selector == 1)
+    {
+        try
+        {
+            auto method = ctx->bus->new_method_call(
+                FWUPDATE_SERVICE, FWUPDATE_SOFTWARE_ROOT,
+                "org.freedesktop.DBus.Properties", "Get");
+            method.append(std::string(FWUPDATE_TARGET_IFACE));
+            method.append(std::string(FWUPDATE_TARGET_PROP));
+            auto reply = ctx->bus->call(method);
+
+            std::variant<std::vector<std::string>> value;
+            reply.read(value);
+            resultTargets = std::get<std::vector<std::string>>(value);
+            return ipmi::responseSuccess(resultTargets.size(),
+                                         stringListToPayload(resultTargets));
+        }
+
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to get Firmware update targets {ERROR}", "ERROR",
+                       e.what());
+            return ipmi::responseUnspecifiedError();
+        }
+    }
+    return ipmi::responseInvalidFieldRequest();
+}
+
+ipmi::RspType<uint8_t> ipmiOEMSetFWupdateTargets(
+    ipmi::Context::ptr ctx, uint8_t targets_size, uint8_t payload_len,
+    std::vector<uint8_t> payload)
+{
+    std::vector<std::string> targets;
+    std::string current;
+
+    if (payload_len != payload.size())
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    for (auto c : payload)
+    {
+        if (c == '\0')
+        {
+            if (!current.empty())
+            {
+                targets.push_back(current);
+                current.clear();
+            }
+        }
+        else
+        {
+            current += c;
+        }
+    }
+    if (!current.empty())
+        targets.push_back(current);
+
+    if (targets_size != targets.size())
+        return ipmi::responseInvalidFieldRequest();
+
+    auto validTargets = getFwTargetLeafNames(*ctx->bus);
+    for (const auto& t : targets)
+    {
+        if (std::find(validTargets.begin(), validTargets.end(), t) ==
+            validTargets.end())
+        {
+            return ipmi::responseInvalidFieldRequest();
+        }
+    }
+
+    try
+    {
+        auto method =
+            ctx->bus->new_method_call(FWUPDATE_SERVICE, FWUPDATE_SOFTWARE_ROOT,
+                                      "org.freedesktop.DBus.Properties", "Set");
+        method.append(std::string(FWUPDATE_TARGET_IFACE));
+        method.append(std::string(FWUPDATE_TARGET_PROP));
+        method.append(std::variant<std::vector<std::string>>(targets));
+        ctx->bus->call(method);
+    }
+    catch (const std::exception&)
+    {
+        return ipmi::responseUnspecifiedError();
+    }
+    return ipmi::responseSuccess(targets.size());
+}
+
+ipmi::RspType<bool> ipmiOEMGetFWUpdateTargetsBusy()
+{
+    try
+    {
+        auto bus = getSdBus();
+        auto value = ipmi::getDbusProperty(
+            *bus, FWUPDATE_SERVICE, FWUPDATE_SOFTWARE_ROOT,
+            FWUPDATE_TARGET_IFACE, FWUPDATE_TARGET_BUSY_PROP);
+
+        bool busy = std::get<bool>(value);
+        return ipmi::responseSuccess(busy);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to get FWUpdateTargetsBusy: {ERROR}", "ERROR",
+                   e.what());
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
+ipmi::RspType<> ipmiOEMSetFWUpdateTargetsBusy(uint8_t data)
+{
+    if (data != 0 && data != 1)
+    {
+        return ipmi::responseReqDataLenInvalid();
+    }
+
+    bool busy = (data & 0x1);
+
+    try
+    {
+        auto bus = getSdBus();
+        ipmi::setDbusProperty(*bus, FWUPDATE_SERVICE, FWUPDATE_SOFTWARE_ROOT,
+                              FWUPDATE_TARGET_IFACE, FWUPDATE_TARGET_BUSY_PROP,
+                              busy);
+        return ipmi::responseSuccess();
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to set FWUpdateTargetsBusy: {ERROR}", "ERROR",
+                   e.what());
+        return ipmi::responseUnspecifiedError();
+    }
+}
+
+ipmi::RspType<uint8_t> ipmiOEMGetFWUpdateApplyTime(ipmi::Context::ptr ctx)
+{
+    uint8_t code = 0;
+
+    try
+    {
+        auto method = ctx->bus->new_method_call(
+            FWUPDATE_APPLYTIME_SERVICE, FWUPDATE_APPLYTIME_OBJPATH,
+            "org.freedesktop.DBus.Properties", "Get");
+        method.append(std::string(FWUPDATE_APPLYTIME_IFACE));
+        method.append(std::string(FWUPDATE_REQ_APPLY_PROP));
+        auto reply = ctx->bus->call(method);
+
+        std::variant<std::string> value;
+        reply.read(value);
+        std::string reqTime = std::get<std::string>(value);
+
+        for (size_t i = 0; i < ApplyTimeDbusStrings.size(); ++i)
+        {
+            if (ApplyTimeDbusStrings[i] == reqTime)
+            {
+                code = static_cast<uint8_t>(i + 1);
+                break;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to get Firmware update Apply time: {ERROR}", "ERROR",
+                   e.what());
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess(code);
+}
+
+ipmi::RspType<> ipmiOEMSetFWUpdateApplyTime(ipmi::Context::ptr ctx,
+                                            uint8_t RequestedApplyTimes)
+{
+    if (RequestedApplyTimes == 0 ||
+        RequestedApplyTimes >
+            static_cast<uint8_t>(
+                RequestedApplyTimes::InMaintenanceWindowOnReset))
+        return ipmi::responseInvalidFieldRequest();
+
+    if (RequestedApplyTimes >
+        static_cast<uint8_t>(RequestedApplyTimes::OnReset))
+        return ipmi::responseCommandNotAvailable();
+
+    std::string dbusTimeVal = ApplyTimeDbusStrings[RequestedApplyTimes - 1];
+
+    try
+    {
+        auto m = ctx->bus->new_method_call(
+            FWUPDATE_APPLYTIME_SERVICE, FWUPDATE_APPLYTIME_OBJPATH,
+            "org.freedesktop.DBus.Properties", "Set");
+        m.append(std::string(FWUPDATE_APPLYTIME_IFACE));
+        m.append(std::string(FWUPDATE_REQ_APPLY_PROP));
+        m.append(std::variant<std::string>(dbusTimeVal));
+        ctx->bus->call(m);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to set Firmware update Apply time: {ERROR}", "ERROR",
+                   e.what());
+        return ipmi::responseUnspecifiedError();
+    }
+
+    return ipmi::responseSuccess();
 }
 
 void AddExtendedlogEntry(uint8_t sensorNumber, uint8_t sensorType,
@@ -7894,38 +8451,56 @@ ipmi::RspType<uint8_t, std::array<uint8_t, extendedSelMaxSize>>
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
         try
         {
-            ipmi::Value variant = ipmi::getDbusProperty(
-                *dbus, service, objectPath, interface, "AdditionalData");
+            // AdditionalData is retrieved through Properties.Get()
+            // for compatibility with dictionary-formatted values.
+            using AdditionalDataVariant =
+                std::variant<std::map<std::string, std::string>,
+                             std::vector<std::string>>;
 
-            std::vector<std::string> additionalData =
-                std::get<std::vector<std::string>>(variant);
+            auto method =
+                dbus->new_method_call(service, objectPath.c_str(),
+                                      "org.freedesktop.DBus.Properties", "Get");
+            method.append(interface, "AdditionalData");
+            auto reply = dbus->call(method);
+            AdditionalDataVariant variant;
+            reply.read(variant);
 
-            std::string extSel = "EXTENDED_SEL_DATA=";
-            auto it = std::find_if(additionalData.begin(), additionalData.end(),
-                                   [&extSel](const std::string& str) {
-                                       return str.find(extSel) !=
-                                              std::string::npos;
-                                   });
-            if (it != additionalData.end())
+            const std::string extSelKey = "EXTENDED_SEL_DATA";
+            std::string extendedData;
+            bool found = false;
+
+            if (auto* mapPtr =
+                    std::get_if<std::map<std::string, std::string>>(&variant))
             {
-                std::string extendedData = *it;
-                std::size_t pos = extendedData.find(extSel);
-                if (pos != std::string::npos)
+                auto it = mapPtr->find(extSelKey);
+                if (it != mapPtr->end())
                 {
-                    extendedData = extendedData.substr(pos + extSel.size());
-                    extData = convertToHexArray(extendedData);
-                }
-                else
-                {
-                    log<level::ERR>("Record not found");
-                    return ipmi::responseSensorInvalid();
+                    extendedData = it->second;
+                    found = true;
                 }
             }
-            else
+            else if (auto* vecPtr =
+                         std::get_if<std::vector<std::string>>(&variant))
+            {
+                std::string prefix = extSelKey + "=";
+                for (const auto& s : *vecPtr)
+                {
+                    if (s.compare(0, prefix.size(), prefix) == 0)
+                    {
+                        extendedData = s.substr(prefix.size());
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!found)
             {
                 log<level::ERR>("Record not found");
                 return ipmi::responseSensorInvalid();
             }
+
+            extData = convertToHexArray(extendedData);
         }
         catch (std::exception& e)
         {
@@ -7987,37 +8562,55 @@ ipmi::RspType<uint16_t, uint8_t, std::vector<uint8_t>>
         std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
         try
         {
-            ipmi::Value variant = ipmi::getDbusProperty(
-                *dbus, service, objectPath, interface, "AdditionalData");
-            std::vector<std::string> additionalData =
-                std::get<std::vector<std::string>>(variant);
-            std::string extSel = "EXTENDED_SEL_DATA=";
-            auto it = std::find_if(additionalData.begin(), additionalData.end(),
-                                   [&extSel](const std::string& str) {
-                                       return str.find(extSel) !=
-                                              std::string::npos;
-                                   });
-            if (it != additionalData.end())
+            using AdditionalDataVariant =
+                std::variant<std::map<std::string, std::string>,
+                             std::vector<std::string>>;
+
+            auto method =
+                dbus->new_method_call(service, objectPath.c_str(),
+                                      "org.freedesktop.DBus.Properties", "Get");
+            method.append(interface, "AdditionalData");
+            auto reply = dbus->call(method);
+            AdditionalDataVariant variant;
+            reply.read(variant);
+
+            const std::string extSelKey = "EXTENDED_SEL_DATA";
+            std::string extendedData;
+            bool found = false;
+
+            if (auto* mapPtr =
+                    std::get_if<std::map<std::string, std::string>>(&variant))
             {
-                std::string extendedData = *it;
-                std::size_t pos = extendedData.find(extSel);
-                if (pos != std::string::npos)
+                auto it = mapPtr->find(extSelKey);
+                if (it != mapPtr->end())
                 {
-                    extendedData = extendedData.substr(pos + extSel.size());
-                    extData = stringToHexVector(extendedData);
-                    extData.resize(extendedSelMaxSize - 1, 0);
-                }
-                else
-                {
-                    log<level::ERR>("Record not found");
-                    return ipmi::responseSensorInvalid();
+                    extendedData = it->second;
+                    found = true;
                 }
             }
-            else
+            else if (auto* vecPtr =
+                         std::get_if<std::vector<std::string>>(&variant))
+            {
+                std::string prefix = extSelKey + "=";
+                for (const auto& s : *vecPtr)
+                {
+                    if (s.compare(0, prefix.size(), prefix) == 0)
+                    {
+                        extendedData = s.substr(prefix.size());
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!found)
             {
                 log<level::ERR>("Record not found");
                 return ipmi::responseSensorInvalid();
             }
+
+            extData = stringToHexVector(extendedData);
+            extData.resize(extendedSelMaxSize, 0);
         }
         catch (std::exception& e)
         {
@@ -8434,6 +9027,41 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdGetPreserveConfig, Privilege::User,
                     ipmiOEMGetPreserveConfig);
+
+    // <Get Firmware update progress>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetFWupdateProgress, Privilege::User,
+                    ipmiOEMGetFWupdateProgress);
+
+    // <Set Firmware Update Targets>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetFWupdateTargets, Privilege::User,
+                    ipmiOEMSetFWupdateTargets);
+
+    // <Get Firmware Update Targets>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetFWupdateTargets, Privilege::User,
+                    ipmiOEMGetFWupdateTargets);
+
+    // <Set Firmware Update Targets Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetFWUpdateTargetsBusy, Privilege::User,
+                    ipmiOEMSetFWUpdateTargetsBusy);
+
+    // <Get Firmware Update Targets Status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetFWUpdateTargetsBusy, Privilege::User,
+                    ipmiOEMGetFWUpdateTargetsBusy);
+
+    // <Set Firmware Update Apply Time>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetFWUpdateApplyTime, Privilege::User,
+                    ipmiOEMSetFWUpdateApplyTime);
+
+    // <Get Firmware Update Apply Time>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetFWUpdateApplyTime, Privilege::User,
+                    ipmiOEMGetFWUpdateApplyTime);
 
     // <Add Extended SEL data>
     registerHandler(prioOemBase, ami::netFnGeneral,

@@ -16,9 +16,9 @@
 
 #include "sensorcommands.hpp"
 
-#include "commandutils.hpp"
 #include "ipmi_to_redfish_hooks.hpp"
 #include "sdrutils.hpp"
+#include "sel_redfish_map.hpp"
 #include "sensorutils.hpp"
 #include "storagecommands.hpp"
 #include "types.hpp"
@@ -39,7 +39,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -508,22 +507,21 @@ bool constructDiscreteSdr(
     uint8_t sensorNumber = static_cast<uint8_t>(sensorNum);
     uint8_t lun = static_cast<uint8_t>(sensorNum >> 8);
 
-    get_sdr::header::set_record_id(
-        recordID, reinterpret_cast<get_sdr::SensorDataRecordHeader*>(&record));
-    record.header.sdr_version = ipmiSdrVersion;
-    record.header.record_type = get_sdr::SENSOR_DATA_COMPACT_RECORD;
-    record.header.record_length = sizeof(get_sdr::SensorDataCompactRecord) -
-                                  sizeof(get_sdr::SensorDataRecordHeader);
-    record.key.owner_id = bmcI2CAddr;
-    record.key.owner_lun = lun;
-    record.key.sensor_number = sensorNumber;
-    record.body.sensor_type = getSensorTypeFromPath(path);
+    record.header.recordId = recordID;
+    record.header.sdrVersion = ipmiSdrVersion;
+    record.header.recordType = get_sdr::SENSOR_DATA_COMPACT_RECORD;
+    record.header.recordLength = sizeof(get_sdr::SensorDataCompactRecord) -
+                                 sizeof(get_sdr::SensorDataRecordHeader);
+    record.key.ownerId = bmcI2CAddr;
+    record.key.ownerLun = lun;
+    record.key.sensorNumber = sensorNumber;
+    record.body.sensorType = getSensorTypeFromPath(path);
 #ifdef FEATURE_APISENSOR_SUPPORT
-    record.body.sensor_initialization = 0x23; // init events
-    record.body.sensor_capabilities = 0x40;   // auto rearm
+    record.body.sensorInitialization = 0x23; // init events
+    record.body.sensorCapabilities = 0x40;   // auto rearm
 #endif
 
-    record.body.event_reading_type = getSensorEventTypeFromPath(path);
+    record.body.eventReadingType = getSensorEventTypeFromPath(path);
     SensorMap sensorMap;
 
     if (!getSensorMap(ctx->yield, service, path, sensorMap,
@@ -547,14 +545,13 @@ bool constructDiscreteSdr(
     // discrete_reading_setting_mask
     updateExtraIpmiFromAssociation(
         path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
-        record.body.sensor_capabilities, record.body.sensor_initialization,
-        record.body.sensor_type, record.body.event_reading_type,
-        record.body.supported_assertions[0],
-        record.body.supported_assertions[1],
-        record.body.supported_deassertions[0],
-        record.body.supported_deassertions[1],
-        record.body.discrete_reading_setting_mask[0],
-        record.body.discrete_reading_setting_mask[1]);
+        record.body.sensorCapabilities, record.body.sensorInitialization,
+        record.body.sensorType, record.body.eventReadingType,
+        record.body.supportedAssertions[0], record.body.supportedAssertions[1],
+        record.body.supportedDeassertions[0],
+        record.body.supportedDeassertions[1],
+        record.body.discreteReadingSettingMask[0],
+        record.body.discreteReadingSettingMask[1]);
 #else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
@@ -562,8 +559,8 @@ bool constructDiscreteSdr(
                               entityInstance);
 #endif
 
-    record.body.entity_id = entityId;
-    record.body.entity_instance = entityInstance;
+    record.body.entityId = entityId;
+    record.body.entityInstance = entityInstance;
     std::string name;
     size_t nameStart = path.rfind("/");
     if (nameStart != std::string::npos)
@@ -571,12 +568,12 @@ bool constructDiscreteSdr(
         name = path.substr(nameStart + 1, std::string::npos - nameStart);
     }
     std::replace(name.begin(), name.end(), '_', ' ');
-    record.body.id_string_info = name.size();
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::memset(record.body.id_string, 0, maxLen);
+    record.body.idStringInfo = name.size();
+    constexpr size_t maxLen = sizeof(record.body.idString);
+    std::memset(record.body.idString, 0, maxLen);
     size_t copyLen = std::min(name.size(), maxLen);
-    std::memcpy(record.body.id_string, name.data(), copyLen);
-    record.body.id_string_info = copyLen;
+    std::memcpy(record.body.idString, name.data(), copyLen);
+    record.body.idStringInfo = copyLen;
 
     details::sdrStatsTable.updateName(sensorNumber, name);
     return true;
@@ -588,20 +585,18 @@ void constructEventSdrHeaderKey(uint16_t sensorNum, uint16_t recordID,
     uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
     uint8_t lun = static_cast<uint8_t>(sensorNum >> 8);
 
-    get_sdr::header::set_record_id(
-        recordID, reinterpret_cast<get_sdr::SensorDataRecordHeader*>(&record));
+    record.header.recordId = recordID;
+    record.header.sdrVersion = ipmiSdrVersion;
+    record.header.recordType = get_sdr::SENSOR_DATA_EVENT_RECORD;
+    record.header.recordLength = sizeof(get_sdr::SensorDataEventRecord) -
+                                 sizeof(get_sdr::SensorDataRecordHeader);
 
-    record.header.sdr_version = ipmiSdrVersion;
-    record.header.record_type = get_sdr::SENSOR_DATA_EVENT_RECORD;
-    record.header.record_length = sizeof(get_sdr::SensorDataEventRecord) -
-                                  sizeof(get_sdr::SensorDataRecordHeader);
+    record.key.ownerId = bmcI2CAddr;
+    record.key.ownerLun = lun;
+    record.key.sensorNumber = sensornumber;
 
-    record.key.owner_id = bmcI2CAddr;
-    record.key.owner_lun = lun;
-    record.key.sensor_number = sensornumber;
-
-    record.body.entity_id = 0x00;
-    record.body.entity_instance = 0x01;
+    record.body.entityId = 0x00;
+    record.body.entityInstance = 0x01;
 }
 
 bool constructEventSdr(
@@ -617,11 +612,11 @@ bool constructEventSdr(
     // Sensor type is hardcoded as a module/board type instead of parsing from
     // sensor path.
     static constexpr const uint8_t module_board_type = 0x15;
-    record.body.sensor_type = module_board_type;
-    record.body.event_reading_type = 0x00;
+    record.body.sensorType = module_board_type;
+    record.body.eventReadingType = 0x00;
 
-    record.body.sensor_record_sharing_1 = 0x00;
-    record.body.sensor_record_sharing_2 = 0x00;
+    record.body.sensorRecordSharing1 = 0x00;
+    record.body.sensorRecordSharing2 = 0x00;
 
     uint8_t sensorCapabilities = 0;
     uint8_t sensorInitialization = 0;
@@ -648,9 +643,9 @@ bool constructEventSdr(
     // supported_assertions, supported_deassertions, and
     // discrete_reading_setting_mask
     updateExtraIpmiFromAssociation(
-        path, ipmiDecoratorPaths, sensorMap, record.body.entity_id,
-        record.body.entity_instance, sensorCapabilities, sensorInitialization,
-        record.body.sensor_type, record.body.event_reading_type,
+        path, ipmiDecoratorPaths, sensorMap, record.body.entityId,
+        record.body.entityInstance, sensorCapabilities, sensorInitialization,
+        record.body.sensorType, record.body.eventReadingType,
         supported_assertions[0], supported_assertions[1],
         supported_deassertions[0], supported_deassertions[1],
         discrete_reading_setting_mask[0], discrete_reading_setting_mask[1]);
@@ -658,8 +653,7 @@ bool constructEventSdr(
     // follow the association chain to get the parent board's entityid and
     // entityInstance
     updateIpmiFromAssociation(path, ipmiDecoratorPaths, sensorMap,
-                              record.body.entity_id,
-                              record.body.entity_instance);
+                              record.body.entityId, record.body.entityInstance);
 
 #endif
 
@@ -671,13 +665,13 @@ bool constructEventSdr(
     }
     std::replace(name.begin(), name.end(), '_', ' ');
 
-    record.body.id_string_info = name.size();
+    record.body.idStringInfo = name.size();
 
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::memset(record.body.id_string, 0, maxLen);
+    constexpr size_t maxLen = sizeof(record.body.idString);
+    std::memset(record.body.idString, 0, maxLen);
     size_t copyLen = std::min(name.size(), maxLen);
-    std::memcpy(record.body.id_string, name.data(), copyLen);
-    record.body.id_string_info = copyLen;
+    std::memcpy(record.body.idString, name.data(), copyLen);
+    record.body.idStringInfo = copyLen;
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -784,8 +778,7 @@ int getOtherSensorsDataRecord(ipmi::Context::ptr ctx, uint16_t recordID,
         {
             return GENERAL_ERROR;
         }
-        data.header.record_id_msb = recordID >> 8;
-        data.header.record_id_lsb = recordID & 0xFF;
+        data.header.recordId = recordID;
         recordData.insert(recordData.end(), reinterpret_cast<uint8_t*>(&data),
                           reinterpret_cast<uint8_t*>(&data) + sizeof(data));
     }
@@ -884,10 +877,37 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     addData["GENERATOR_ID"] = std::to_string(generatorID);
     addData["RECORD_TYPE"] = std::to_string(systemRecordType);
     addData["SENSOR_TYPE"] = std::to_string(sensorType);
-    addData["SENSOR_NUMBER"] = std::to_string(sensorNum);
+    addData["EVENT_TYPE"] = std::to_string(eventType);
+    // Validate sensor number against existing sensors. If the sensor was
+    // resolved on D-Bus (sensorPath is non-empty), preserve the user-supplied
+    // number; otherwise store 0xFF to indicate "unknown / not present".
+    addData["SENSOR_NUMBER"] = std::to_string(
+        sensorPath.empty() ? static_cast<uint8_t>(0xFF) : sensorNum);
 
     std::string redfishMessage = intel_oem::ipmi::sel::checkRedfishMessage(
         generatorID, sensorType, sensorNum, eventType, eventData1);
+
+    // Optional richer Redfish-style message via JSON map (if installed).
+    // Returns empty string when no row matches; legacy behavior preserved.
+    {
+        std::string mapped =
+            intel_oem::ipmi::sel::SelRedfishMap::instance().format(
+                generatorID, sensorType, sensorNum, eventType, eventData1,
+                eventData2.value_or(0xFF), eventData3.value_or(0xFF),
+                sensorPath);
+        if (!mapped.empty())
+        {
+            redfishMessage = mapped;
+            auto [rfId, rfArgs] =
+                intel_oem::ipmi::sel::SelRedfishMap::splitIdArgs(mapped);
+            addData["REDFISH_MESSAGE_ID"] = rfId;
+            if (!rfArgs.empty())
+            {
+                addData["REDFISH_MESSAGE_ARGS"] = rfArgs;
+            }
+        }
+    }
+
     try
     {
         std::string service =
@@ -2106,19 +2126,17 @@ ipmi::RspType<uint8_t,         // sensorEventStatus
 void constructSensorSdrHeaderKey(uint16_t sensorNum, uint16_t recordID,
                                  get_sdr::SensorDataFullRecord& record)
 {
-    get_sdr::header::set_record_id(
-        recordID, reinterpret_cast<get_sdr::SensorDataRecordHeader*>(&record));
-
     uint8_t sensornumber = static_cast<uint8_t>(sensorNum);
     uint8_t lun = static_cast<uint8_t>(sensorNum >> 8);
 
-    record.header.sdr_version = ipmiSdrVersion;
-    record.header.record_type = get_sdr::SENSOR_DATA_FULL_RECORD;
-    record.header.record_length = sizeof(get_sdr::SensorDataFullRecord) -
-                                  sizeof(get_sdr::SensorDataRecordHeader);
-    record.key.owner_id = bmcI2CAddr;
-    record.key.owner_lun = lun;
-    record.key.sensor_number = sensornumber;
+    record.header.recordId = recordID;
+    record.header.sdrVersion = ipmiSdrVersion;
+    record.header.recordType = get_sdr::SENSOR_DATA_FULL_RECORD;
+    record.header.recordLength = sizeof(get_sdr::SensorDataFullRecord) -
+                                 sizeof(get_sdr::SensorDataRecordHeader);
+    record.key.ownerId = bmcI2CAddr;
+    record.key.ownerLun = lun;
+    record.key.sensorNumber = sensornumber;
 }
 
 bool constructSensorSdr(
@@ -2141,35 +2159,35 @@ bool constructSensorSdr(
         }
         return false;
     }
-    record.body.sensor_capabilities = 0x68; // auto rearm - todo hysteresis
-    record.body.sensor_type = getSensorTypeFromPath(path);
+    record.body.sensorCapabilities = 0x68; // auto rearm - todo hysteresis
+    record.body.sensorType = getSensorTypeFromPath(path);
     std::string type = getSensorTypeStringFromPath(path);
     for (const auto& [unitsType, units] : sensorUnits)
     {
         if (type == unitsType)
         {
-            record.body.sensor_units_2_base = static_cast<uint8_t>(units);
+            record.body.sensorUnits2Base = static_cast<uint8_t>(units);
 #ifdef FEATURE_APISENSOR_SUPPORT
             // Special case for flowrate
             if (type == "flowrate")
             {
-                record.body.sensor_units_1 =
+                record.body.sensorUnits1 =
                     0x22; // Rate = per minute, base/modifier
-                record.body.sensor_units_3_modifier =
+                record.body.sensorUnits3Modifier =
                     static_cast<uint8_t>(SensorUnits::min); // minute
             }
             // Special case for pwm, utilizaiton, and humidity
             if (type == "pwm" || type == "utilization" || type == "humidity")
             {
-                record.body.sensor_units_1 = 0x1; // Percentage = Yes
-                record.body.sensor_units_2_base =
+                record.body.sensorUnits1 = 0x1; // Percentage = Yes
+                record.body.sensorUnits2Base =
                     static_cast<uint8_t>(SensorUnits::unspecified);
             }
 #endif
         }
     }
 
-    record.body.event_reading_type = getSensorEventTypeFromPath(path);
+    record.body.eventReadingType = getSensorEventTypeFromPath(path);
 
     auto sensorObject = sensorMap.find("xyz.openbmc_project.Sensor.Value");
     if (sensorObject == sensorMap.end())
@@ -2190,14 +2208,13 @@ bool constructSensorSdr(
     // updated).
     updateExtraIpmiFromAssociation(
         path, ipmiDecoratorPaths, sensorMap, entityId, entityInstance,
-        record.body.sensor_capabilities, record.body.sensor_initialization,
-        record.body.sensor_type, record.body.event_reading_type,
-        record.body.supported_assertions[0],
-        record.body.supported_assertions[1],
-        record.body.supported_deassertions[0],
-        record.body.supported_deassertions[1],
-        record.body.discrete_reading_setting_mask[0],
-        record.body.discrete_reading_setting_mask[1]);
+        record.body.sensorCapabilities, record.body.sensorInitialization,
+        record.body.sensorType, record.body.eventReadingType,
+        record.body.supportedAssertions[0], record.body.supportedAssertions[1],
+        record.body.supportedDeassertions[0],
+        record.body.supportedDeassertions[1],
+        record.body.discreteReadingSettingMask[0],
+        record.body.discreteReadingSettingMask[1]);
 #else
     // follow the association chain to get the parent board's entityid and
     // entityInstance
@@ -2205,8 +2222,8 @@ bool constructSensorSdr(
                               entityInstance);
 #endif
 
-    record.body.entity_id = entityId;
-    record.body.entity_instance = entityInstance;
+    record.body.entityId = entityId;
+    record.body.entityInstance = entityInstance;
 
     double max = 0;
     double min = 0;
@@ -2249,23 +2266,23 @@ bool constructSensorSdr(
 
     // apply M, B, and exponents, M and B are 10 bit values, exponents are 4
 
-    record.body.m_lsb = mValue & 0xFF;
+    record.body.mLsb = mValue & 0xFF;
 
     uint8_t mBitSign = (mValue < 0) ? 1 : 0;
     uint8_t mBitNine = (mValue & 0x0100) >> 8;
 
     // move the smallest bit of the MSB into place (bit 9)
     // the MSbs are bits 7:8 in m_msb_and_tolerance
-    record.body.m_msb_and_tolerance = (mBitSign << 7) | (mBitNine << 6);
+    record.body.mMsbAndTolerance = (mBitSign << 7) | (mBitNine << 6);
 
-    record.body.b_lsb = bValue & 0xFF;
+    record.body.bLsb = bValue & 0xFF;
 
     uint8_t bBitSign = (bValue < 0) ? 1 : 0;
     uint8_t bBitNine = (bValue & 0x0100) >> 8;
 
     // move the smallest bit of the MSB into place (bit 9)
     // the MSbs are bits 7:8 in b_msb_and_accuracy_lsb
-    record.body.b_msb_and_accuracy_lsb = (bBitSign << 7) | (bBitNine << 6);
+    record.body.bMsbAndAccuracyLsb = (bBitSign << 7) | (bBitNine << 6);
 
     uint8_t rExpSign = (rExp < 0) ? 1 : 0;
     uint8_t rExpBits = rExp & 0x07;
@@ -2274,14 +2291,14 @@ bool constructSensorSdr(
     uint8_t bExpBits = bExp & 0x07;
 
     // move rExp and bExp into place
-    record.body.r_b_exponents =
+    record.body.rbExponents =
         (rExpSign << 7) | (rExpBits << 4) | (bExpSign << 3) | bExpBits;
 
     // Set the analog reading byte interpretation accordingly
 #ifdef FEATURE_APISENSOR_SUPPORT
-    record.body.sensor_units_1 |= (bSigned ? 1 : 0) << 7;
+    record.body.sensorUnits1 |= (bSigned ? 1 : 0) << 7;
 #else
-    record.body.sensor_units_1 = (bSigned ? 1 : 0) << 7;
+    record.body.sensorUnits1 = (bSigned ? 1 : 0) << 7;
 #endif
 
     // TODO(): Perhaps care about Tolerance, Accuracy, and so on
@@ -2310,14 +2327,14 @@ bool constructSensorSdr(
 
         name.resize(FULL_RECORD_ID_STR_MAX_LENGTH);
     }
-    get_sdr::body::set_id_strlen(name.size(), &record.body);
-    get_sdr::body::set_id_type(3, &record.body); // "8-bit ASCII + Latin 1"
+    get_sdr::body::setIdStrLen(name.size(), record.body);
+    get_sdr::body::setIdType(3, record.body); // "8-bit ASCII + Latin 1"
 
-    constexpr size_t maxLen = sizeof(record.body.id_string);
-    std::memset(record.body.id_string, 0, maxLen);
+    constexpr size_t maxLen = sizeof(record.body.idString);
+    std::memset(record.body.idString, 0, maxLen);
     size_t copyLen = std::min(name.size(), maxLen);
-    std::memcpy(record.body.id_string, name.data(), copyLen);
-    record.body.id_string_info = copyLen;
+    std::memcpy(record.body.idString, name.data(), copyLen);
+    record.body.idStringInfo = copyLen;
 
     // Remember the sensor name, as determined for this sensor number
     details::sdrStatsTable.updateName(sensorNum, name);
@@ -2334,63 +2351,75 @@ bool constructSensorSdr(
 
     if (thresholdData.criticalHigh)
     {
-        record.body.upper_critical_threshold = *thresholdData.criticalHigh;
-        record.body.supported_deassertions[1] |= static_cast<uint8_t>(
+        record.body.upperCriticalThreshold = *thresholdData.criticalHigh;
+        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::criticalThreshold);
-        record.body.supported_deassertions[1] |= static_cast<uint8_t>(
+        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::upperCriticalGoingHigh);
-        record.body.supported_assertions[1] |= static_cast<uint8_t>(
+        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::upperCriticalGoingHigh);
-        record.body.discrete_reading_setting_mask[0] |=
+        record.body.discreteReadingSettingMask[0] |=
             static_cast<uint8_t>(IPMISensorReadingByte3::upperCritical);
     }
     if (thresholdData.warningHigh)
     {
-        record.body.upper_noncritical_threshold = *thresholdData.warningHigh;
-        record.body.supported_deassertions[1] |= static_cast<uint8_t>(
+        record.body.upperNoncriticalThreshold = *thresholdData.warningHigh;
+        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::nonCriticalThreshold);
-        record.body.supported_deassertions[0] |= static_cast<uint8_t>(
+        record.body.supportedDeassertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::upperNonCriticalGoingHigh);
-        record.body.supported_assertions[0] |= static_cast<uint8_t>(
+        record.body.supportedAssertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::upperNonCriticalGoingHigh);
-        record.body.discrete_reading_setting_mask[0] |=
+        record.body.discreteReadingSettingMask[0] |=
             static_cast<uint8_t>(IPMISensorReadingByte3::upperNonCritical);
     }
     if (thresholdData.criticalLow)
     {
-        record.body.lower_critical_threshold = *thresholdData.criticalLow;
-        record.body.supported_assertions[1] |= static_cast<uint8_t>(
+        record.body.lowerCriticalThreshold = *thresholdData.criticalLow;
+        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::criticalThreshold);
-        record.body.supported_deassertions[0] |= static_cast<uint8_t>(
+        record.body.supportedDeassertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::lowerCriticalGoingLow);
-        record.body.supported_assertions[0] |= static_cast<uint8_t>(
+        record.body.supportedAssertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::lowerCriticalGoingLow);
-        record.body.discrete_reading_setting_mask[0] |=
+        record.body.discreteReadingSettingMask[0] |=
             static_cast<uint8_t>(IPMISensorReadingByte3::lowerCritical);
     }
     if (thresholdData.warningLow)
     {
-        record.body.lower_noncritical_threshold = *thresholdData.warningLow;
-        record.body.supported_assertions[1] |= static_cast<uint8_t>(
+        record.body.lowerNoncriticalThreshold = *thresholdData.warningLow;
+        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::nonCriticalThreshold);
-        record.body.supported_deassertions[0] |= static_cast<uint8_t>(
+        record.body.supportedDeassertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::lowerNonCriticalGoingLow);
-        record.body.supported_assertions[0] |= static_cast<uint8_t>(
+        record.body.supportedAssertions[0] |= static_cast<uint8_t>(
             IPMISensorEventEnableThresholds::lowerNonCriticalGoingLow);
-        record.body.discrete_reading_setting_mask[0] |=
+        record.body.discreteReadingSettingMask[0] |=
             static_cast<uint8_t>(IPMISensorReadingByte3::lowerNonCritical);
     }
 
     // everything that is readable is setable
-    record.body.discrete_reading_setting_mask[1] =
-        record.body.discrete_reading_setting_mask[0];
+    record.body.discreteReadingSettingMask[1] =
+        record.body.discreteReadingSettingMask[0];
 
     return true;
 }
 
 uint16_t getNumberOfSensors(void)
 {
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+    std::shared_ptr<SensorNumMap> sensorNumMapPtr;
+    details::getSensorNumMap(sensorNumMapPtr);
+    if (!sensorNumMapPtr)
+    {
+        return 0;
+    }
+
+    return static_cast<uint16_t>(
+        std::min(sensorNumMapPtr->size(), static_cast<size_t>(maxIPMISensors)));
+#else
     return std::min(getSensorTree().size(), maxIPMISensors);
+#endif
 }
 
 static int getSensorDataRecord(
@@ -2431,14 +2460,80 @@ static int getSensorDataRecord(
         return nextRecord;
     }
 
-    // Perform a incremental scan of the SDR Record ID's and translate the
-    // first 765 SDR records (i.e. maxIPMISensors) into IPMI Sensor
-    // Numbers. The IPMI sensor numbers are not linear, and have a reserved
-    // gap at 0xff. This code creates 254 sensors per LUN, excepting LUN 2
-    // which has special meaning.
+    // Perform incremental SDR scan and translate record IDs into IPMI sensor
+    // numbers.
     std::string connection;
     std::string path;
     std::vector<std::string> interfaces;
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+    std::shared_ptr<SensorNumMap> sensorNumMapPtr;
+    SensorSubTree sensorTree;
+    if (!getSensorSubtree(sensorTree) || sensorTree.empty())
+    {
+        return GENERAL_ERROR;
+    }
+
+    details::getSensorNumMap(sensorNumMapPtr);
+    if (!sensorNumMapPtr)
+    {
+        return GENERAL_ERROR;
+    }
+
+    if (recordID >= sensorNumMapPtr->size())
+    {
+        return GENERAL_ERROR;
+    }
+
+    // Static map can temporarily contain entries that are not usable for SDR
+    // reads (for example during subtree updates). Skip those entries and
+    // continue with the next valid record.
+    uint16_t sensorNum = invalidSensorNumber;
+    bool foundValidRecord = false;
+    for (uint16_t scanRecordID = recordID;
+         scanRecordID < sensorNumMapPtr->size(); ++scanRecordID)
+    {
+        auto sensorMapIter = sensorNumMapPtr->begin();
+        std::advance(sensorMapIter, scanRecordID);
+
+        uint16_t candidateSensorNum =
+            static_cast<uint16_t>(sensorMapIter->left);
+        const std::string& candidatePath = sensorMapIter->right;
+
+        uint8_t sensorLowByte = static_cast<uint8_t>(candidateSensorNum);
+        uint8_t lun = static_cast<uint8_t>(candidateSensorNum >> 8);
+        if ((candidateSensorNum == invalidSensorNumber) ||
+            (sensorLowByte == reservedSensorNumber) || (lun == 2) ||
+            (candidateSensorNum > lun3MaxSensorNum))
+        {
+            continue;
+        }
+
+        auto sensorIter = sensorTree.find(candidatePath);
+        if (sensorIter == sensorTree.end() || sensorIter->second.empty())
+        {
+            continue;
+        }
+
+        connection = sensorIter->second.begin()->first;
+        interfaces = sensorIter->second.begin()->second;
+        path = candidatePath;
+        sensorNum = candidateSensorNum;
+        ctx->lun = lun;
+        recordID = scanRecordID;
+        nextRecord =
+            (recordID == lastRecord) ? lastRecordIndex : (recordID + 1);
+        foundValidRecord = true;
+        break;
+    }
+
+    if (!foundValidRecord)
+    {
+        return GENERAL_ERROR;
+    }
+#else
+    // The IPMI sensor numbers are not linear, and have a reserved gap at 0xff.
+    // This code creates 254 sensors per LUN, excepting LUN 2 which has special
+    // meaning.
     uint16_t sensNumFromRecID{recordID};
     if ((recordID > lun0MaxSensorNum) && (recordID < lun1MaxSensorNum))
     {
@@ -2495,6 +2590,8 @@ static int getSensorDataRecord(
         }
         return GENERAL_ERROR;
     }
+#endif
+
     // Construct full record (SDR type 1) for the threshold sensors
     if (std::find(interfaces.begin(), interfaces.end(),
                   sensor::sensorInterface) != interfaces.end())
@@ -2579,7 +2676,33 @@ static ipmi::RspType<uint8_t, // respcount
     {
         return ipmi::responseResponseError();
     }
+
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+    std::shared_ptr<SensorNumMap> sensorNumMapPtr;
+    details::getSensorNumMap(sensorNumMapPtr);
+    if (!sensorNumMapPtr)
+    {
+        return ipmi::responseResponseError();
+    }
+
+    uint16_t numSensors = static_cast<uint16_t>(sensorNumMapPtr->size());
+    std::array<uint16_t, 4> sensorsPerLun{};
+    for (const auto& entry : *sensorNumMapPtr)
+    {
+        uint16_t sensorNum = static_cast<uint16_t>(entry.left);
+        uint8_t sensorLun = static_cast<uint8_t>(sensorNum >> 8);
+        uint8_t sensorLowByte = static_cast<uint8_t>(sensorNum);
+
+        if ((sensorLun <= 3) && (sensorLun != 2) &&
+            (sensorLowByte != reservedSensorNumber))
+        {
+            sensorsPerLun[sensorLun]++;
+        }
+    }
+#else
     uint16_t numSensors = getNumberOfSensors();
+#endif
+
     if (operation.value_or(0) == getSdrCount)
     {
         sdrCount = numSensors + ipmi::sensor::getOtherSensorsCount(ctx) - 1;
@@ -2588,6 +2711,23 @@ static ipmi::RspType<uint8_t, // respcount
     else if (operation.value_or(0) == getSensorCount)
     {
         // Return the number of sensors attached to the LUN
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+        if (ctx->lun == 0)
+        {
+            sdrCount = static_cast<uint8_t>(std::min(
+                sensorsPerLun[0], static_cast<uint16_t>(maxSensorsPerLUN)));
+        }
+        else if (ctx->lun == 1)
+        {
+            sdrCount = static_cast<uint8_t>(std::min(
+                sensorsPerLun[1], static_cast<uint16_t>(maxSensorsPerLUN)));
+        }
+        else if (ctx->lun == 3)
+        {
+            sdrCount = static_cast<uint8_t>(std::min(
+                sensorsPerLun[3], static_cast<uint16_t>(maxSensorsPerLUN)));
+        }
+#else
         if ((ctx->lun == 0) && (numSensors > 0))
         {
             sdrCount =
@@ -2612,6 +2752,7 @@ static ipmi::RspType<uint8_t, // respcount
                     "Maximum number of IPMI sensors exceeded.");
             }
         }
+#endif
     }
     else
     {
@@ -2619,6 +2760,20 @@ static ipmi::RspType<uint8_t, // respcount
     }
 
     // Get Sensor count. This returns the number of sensors
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+    if (sensorsPerLun[0] > 0)
+    {
+        lunsAndDynamicPopulation |= 1;
+    }
+    if (sensorsPerLun[1] > 0)
+    {
+        lunsAndDynamicPopulation |= 2;
+    }
+    if (sensorsPerLun[3] > 0)
+    {
+        lunsAndDynamicPopulation |= 8;
+    }
+#else
     if (numSensors > 0)
     {
         lunsAndDynamicPopulation |= 1;
@@ -2631,6 +2786,8 @@ static ipmi::RspType<uint8_t, // respcount
     {
         lunsAndDynamicPopulation |= 8;
     }
+#endif
+
     if (numSensors > maxIPMISensors)
     {
         // error
@@ -2708,45 +2865,96 @@ ipmi::RspType<uint8_t> // Present Timer Countdown Value
     static constexpr auto countdownValue = "TmrCountdownValue";
     // Set the Value to DBUS
     std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+    uint16_t lastSW = 0, lastBMC = 0, lastSEL = 0;
+
     try
     {
-        ipmi::setDbusProperty(*dbus, pefBus, pefPostponeTmrObj,
-                              pefPostponeTmrIface, "ArmPEFPostponeTmr",
-                              pefPostponeTimer);
+        using ipmi::storage::readLastEntryId;
+        lastSW = std::get<uint16_t>(getDbusProperty(
+            *dbus, pefBus, pefObj, pefConfInfoIntf, "LastSWProcessedEventID"));
+        lastBMC = std::get<uint16_t>(getDbusProperty(
+            *dbus, pefBus, pefObj, pefConfInfoIntf, "LastBMCProcessedEventID"));
+        lastSEL = readLastEntryId();
     }
-
-    catch (const sdbusplus::exception_t& e)
+    catch (const std::exception& e)
     {
-        lg2::error("Failed to update Timer Value");
+        lg2::error("Failed to read SEL match data: {ERROR}", "ERROR", e.what());
         return ipmi::responseUnspecifiedError();
     }
 
-    // Get the value of PefPostpone timer in DBUS
-    PropertyMap pefCfgValues;
-    // sdbusplus::bus::bus bus{ipmid_get_sd_bus_connection()};
-    auto method = dbus->new_method_call(pefBus, pefPostponeTmrObj, PROP_INTF,
-                                        METHOD_GET_ALL);
-    method.append(pefPostponeCountDownIface);
-    auto reply = dbus->call(method);
-    if (reply.is_method_error())
+    if (pefPostponeTimer != presentCwnValue)
     {
-        lg2::error("Failed to get Countdown property");
-    }
-    try
-    {
-        reply.read(pefCfgValues);
-    }
-    catch (const std::exception&)
-    {
-        return ipmi::responseResponseError();
+        try
+        {
+            ipmi::setDbusProperty(*dbus, pefBus, pefPostponeTmrObj,
+                                  pefPostponeTmrIface, "ArmPEFPostponeTmr",
+                                  pefPostponeTimer);
+        }
+
+        catch (const sdbusplus::exception_t& e)
+        {
+            lg2::error("Failed to update Timer Value");
+            return ipmi::responseUnspecifiedError();
+        }
     }
 
-    auto iterId = pefCfgValues.find(countdownValue);
-    if (iterId == pefCfgValues.end())
+    if ((pefPostponeTimer == presentCwnValue))
     {
-        lg2::error("Failed to get PEF Version");
+        lg2::info("Get the Current Countdown Value");
+
+        if ((lastSW == lastSEL) || (lastBMC == lastSEL))
+        {
+            lg2::info(
+                "Last processed event matches latest SEL record — freezing countdown");
+            try
+            {
+                Value armedValue =
+                    getDbusProperty(*dbus, pefBus, pefPostponeTmrObj,
+                                    pefPostponeTmrIface, "ArmPEFPostponeTmr");
+                uint8_t armedVal = std::get<uint8_t>(armedValue);
+                return ipmi::responseSuccess(armedVal);
+            }
+            catch (const std::exception& e)
+            {
+                lg2::warning(
+                    "Failed to get armed value, fallback to countdown: {ERROR}",
+                    "ERROR", e);
+            }
+        }
+
+        try
+        {
+            PropertyMap pefCfgValues;
+            auto method = dbus->new_method_call(pefBus, pefPostponeTmrObj,
+                                                PROP_INTF, METHOD_GET_ALL);
+            method.append(pefPostponeCountDownIface);
+            auto reply = dbus->call(method);
+            if (reply.is_method_error())
+            {
+                lg2::error("Failed to get Countdown property");
+                return ipmi::responseUnspecifiedError();
+            }
+
+            reply.read(pefCfgValues);
+
+            auto iterId = pefCfgValues.find(countdownValue);
+            if (iterId == pefCfgValues.end())
+            {
+                lg2::error("Failed to get PEF Version");
+                return ipmi::responseUnspecifiedError();
+            }
+
+            countdownTmrValue =
+                static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
+            return ipmi::responseSuccess(countdownTmrValue);
+        }
+        catch (const std::exception& e)
+        {
+            lg2::error("Failed to get countdown timer value: {ERROR}", "ERROR",
+                       e);
+            return ipmi::responseResponseError();
+        }
     }
-    countdownTmrValue = static_cast<uint8_t>(std::get<uint8_t>(iterId->second));
 
     // Checking Conditions as per the ipmi Specification
     if (pefPostponeTimer == pefDisable)
@@ -2765,10 +2973,6 @@ ipmi::RspType<uint8_t> // Present Timer Countdown Value
     {
         lg2::info("PEF Task is Disabled by Postpone Timer");
         return ipmi::responseSuccess(pefPostponeTimer);
-    }
-    else if ((pefPostponeTimer == presentCwnValue))
-    {
-        lg2::info("Get the Current Countdown Value");
     }
 
     return ipmi::responseSuccess(countdownTmrValue);
@@ -3082,13 +3286,19 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         {
             uint8_t setComplete = 0x00;
             uint8_t setInProgress = 0x01;
+            uint8_t commitWrite = 0x02;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
             }
-            if ((paraData != setComplete) && (paraData != setInProgress))
+            if ((paraData != setComplete) && (paraData != setInProgress) &&
+                (paraData != commitWrite))
             {
                 return ipmi::responseInvalidFieldRequest();
+            }
+            if (paraData == commitWrite && pefSetInPro != setInProgress)
+            {
+                return response(ipmiCCParamNotSupported);
             }
             pefSetInPro = paraData;
             break;
@@ -3604,7 +3814,7 @@ ipmi::RspType<uint16_t,            // next record ID
     }
 
     size_t sdrLength =
-        sizeof(get_sdr::SensorDataRecordHeader) + hdr->record_length;
+        sizeof(get_sdr::SensorDataRecordHeader) + hdr->recordLength;
 
     if (offset >= sdrLength)
     {

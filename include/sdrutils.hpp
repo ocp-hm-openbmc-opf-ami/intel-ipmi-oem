@@ -21,8 +21,10 @@
 #include <boost/bimap.hpp>
 #include <boost/container/flat_map.hpp>
 #include <phosphor-logging/log.hpp>
+#include <sdbusplus/bus.hpp>
 #include <sdbusplus/bus/match.hpp>
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -336,6 +338,136 @@ inline static bool getSensorNumMap(std::shared_ptr<SensorNumMap>& sensorNumMap)
     prevSensorUpdatedIndex = curSensorUpdatedIndex;
 
     sensorNumMapPtr = std::make_shared<SensorNumMap>();
+#ifdef FEATURE_STATIC_SENSOR_NUMBER
+    // Open D-Bus connection once for all sensors to avoid per-sensor overhead.
+    sdbusplus::bus_t bus = sdbusplus::bus::new_default_system();
+    constexpr std::array<const char*, 3> sensorNumberInterfaces = {
+        "xyz.openbmc_project.Sensor.Value",
+        "xyz.openbmc_project.Sensor.EventOnly",
+        "xyz.openbmc_project.Sensor.State",
+    };
+    for (const auto& sensor : *sensorTree)
+    {
+        if (sensor.second.empty())
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Skipping sensor in strict map: no service for sensor",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()));
+            continue;
+        }
+
+        std::map<std::string, ipmi::DbusVariant> properties;
+        bool sensorNumberFound = false;
+        for (const auto& serviceEntry : sensor.second)
+        {
+            const std::string& service = serviceEntry.first;
+            for (const char* interfaceName : sensorNumberInterfaces)
+            {
+                if (std::find(serviceEntry.second.begin(),
+                              serviceEntry.second.end(), interfaceName) ==
+                    serviceEntry.second.end())
+                {
+                    continue;
+                }
+
+                auto getProperties = bus.new_method_call(
+                    service.c_str(), sensor.first.c_str(),
+                    "org.freedesktop.DBus.Properties", "GetAll");
+                getProperties.append(interfaceName);
+
+                try
+                {
+                    std::map<std::string, ipmi::DbusVariant> tempProperties;
+                    auto response = bus.call(getProperties);
+                    response.read(tempProperties);
+
+                    auto sensorNumIter = tempProperties.find("SensorNumber");
+                    if (sensorNumIter != tempProperties.end())
+                    {
+                        properties = std::move(tempProperties);
+                        sensorNumberFound = true;
+                        break;
+                    }
+                }
+                catch (const std::exception&)
+                {
+                    continue;
+                }
+            }
+
+            if (sensorNumberFound)
+            {
+                break;
+            }
+        }
+
+        if (!sensorNumberFound)
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Skipping sensor in strict map: SensorNumber missing on supported sensor interfaces",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()));
+            continue;
+        }
+
+        auto sensorNumIter = properties.find("SensorNumber");
+        if (sensorNumIter == properties.end())
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Skipping sensor in strict map: SensorNumber missing",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()));
+            continue;
+        }
+
+        uint16_t sensorNum = invalidSensorNumber;
+        if (auto value = std::get_if<uint8_t>(&sensorNumIter->second);
+            value != nullptr)
+        {
+            sensorNum = *value;
+        }
+        else if (auto value = std::get_if<uint16_t>(&sensorNumIter->second);
+                 value != nullptr)
+        {
+            sensorNum = *value;
+        }
+        else
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Skipping sensor in strict map: SensorNumber wrong type",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()));
+            continue;
+        }
+
+        // Keep only sensor numbers that are valid for IPMI SDR enumeration.
+        constexpr uint16_t lun3MaxSensorNum =
+            lun3Sensor0 + maxSensorsPerLUN - 1;
+        uint8_t sensorLun = static_cast<uint8_t>(sensorNum >> 8);
+        uint8_t sensorLowByte = static_cast<uint8_t>(sensorNum);
+
+        if ((sensorNum == invalidSensorNumber) ||
+            (sensorLowByte == reservedSensorNumber) || (sensorLun == 2) ||
+            (sensorNum > lun3MaxSensorNum))
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Skipping sensor in strict map: SensorNumber out of range",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()),
+                phosphor::logging::entry("SENSORNUM=0x%X", sensorNum));
+            continue;
+        }
+
+        if (sensorNumMapPtr->left.find(sensorNum) !=
+            sensorNumMapPtr->left.end())
+        {
+            phosphor::logging::log<phosphor::logging::level::WARNING>(
+                "Duplicate SensorNumber in strict map, skipping",
+                phosphor::logging::entry("PATH=%s", sensor.first.c_str()),
+                phosphor::logging::entry("SENSORNUM=%u", sensorNum));
+            continue;
+        }
+
+        sensorNumMapPtr->insert(
+            SensorNumMap::value_type(sensorNum, sensor.first));
+    }
+#else
 
     uint16_t sensorNum = 0;
     uint16_t sensorIndex = 0;
@@ -362,6 +494,7 @@ inline static bool getSensorNumMap(std::shared_ptr<SensorNumMap>& sensorNumMap)
     }
     sensorNumMap = sensorNumMapPtr;
     sensorNumMapUpated = true;
+#endif
     return sensorNumMapUpated;
 }
 } // namespace details

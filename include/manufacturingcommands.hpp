@@ -38,8 +38,7 @@ namespace ipmi
 static constexpr const char* fanService = "xyz.openbmc_project.FanSensor";
 static constexpr const char* buttonService =
     "xyz.openbmc_project.Chassis.Buttons";
-static constexpr const char* ledServicePrefix =
-    "xyz.openbmc_project.LED.Controller.";
+static constexpr const char* ledService = "xyz.openbmc_project.LED.Controller";
 
 static constexpr const char* ledPathPrefix =
     "/xyz/openbmc_project/led/physical/";
@@ -55,7 +54,7 @@ static constexpr const char* ledIntf = "xyz.openbmc_project.Led.Physical";
 static constexpr const char* intrusionService =
     "xyz.openbmc_project.IntrusionSensor";
 static constexpr const char* intrusionPath =
-    "/xyz/openbmc_project/Intrusion/Chassis_Intrusion";
+    "/xyz/openbmc_project/Chassis/Intrusion";
 static constexpr const char* intrusionIntf =
     "xyz.openbmc_project.Chassis.Intrusion";
 

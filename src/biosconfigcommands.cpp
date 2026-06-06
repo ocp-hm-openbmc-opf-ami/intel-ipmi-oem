@@ -20,8 +20,8 @@
 
 #include <biosconfigcommands.hpp>
 #include <boost/crc.hpp>
-#include <boost/process/child.hpp>
-#include <boost/process/io.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/io.hpp>
 #include <ipmid/api.hpp>
 #include <ipmid/message.hpp>
 #include <ipmid/message/types.hpp>
@@ -605,8 +605,9 @@ static void generateAndSendAttributesData(std::string service,
 template <typename... ArgTypes>
 static int generateBIOSXMLFile(const char* path, ArgTypes&&... tArgs)
 {
-    boost::process::child execProg(path, const_cast<char*>(tArgs)...,
-                                   boost::process::std_out > biosXMLFilePath);
+    boost::process::v1::child execProg(
+        path, const_cast<char*>(tArgs)...,
+        boost::process::v1::std_out > biosXMLFilePath);
     execProg.wait();
     return execProg.exit_code();
 }
@@ -914,7 +915,6 @@ ipmi::RspType<uint32_t> ipmiOEMSetPayload(ipmi::Context::ptr&, uint8_t paramSel,
         default:
             return ipmi::responseInvalidFieldRequest();
     }
-    return ipmi::responseResponseError();
 }
 
 ipmi::RspType<message::Payload> ipmiOEMGetPayload(
@@ -1074,7 +1074,6 @@ ipmi::RspType<message::Payload> ipmiOEMGetPayload(
         default:
             return ipmi::responseInvalidFieldRequest();
     }
-    return ipmi::responseInvalidFieldRequest();
 }
 
 ipmi::RspType<> ipmiOEMSetBIOSHashInfo(
@@ -1116,7 +1115,7 @@ ipmi::RspType<> ipmiOEMSetBIOSHashInfo(
 
     std::string hashFilePath = "/var/lib/bios-settings-manager/seedData";
     std::ofstream ofs(hashFilePath, std::ios::out);
-    const auto& writeData = json.dump();
+    const auto& writeData = json.dump(4);
     ofs << writeData;
     ofs.close();
     return ipmi::responseSuccess();

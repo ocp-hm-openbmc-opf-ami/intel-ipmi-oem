@@ -273,8 +273,15 @@ constexpr auto cmdGetBiosPostCodeToIpmiMaxSize = 945;
 static constexpr Cmd cmdOEMGetTimezone = 0x9E;
 static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 // 0xF1 to 0xFC reserved for IPMI Firmware update
+static constexpr Cmd cmdGetFWupdateProgress = 0xF1;
 static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
+static constexpr Cmd cmdSetFWupdateTargets = 0xF4;
+static constexpr Cmd cmdGetFWupdateTargets = 0xF5;
+static constexpr Cmd cmdSetFWUpdateTargetsBusy = 0xF6;
+static constexpr Cmd cmdGetFWUpdateTargetsBusy = 0xF7;
+static constexpr Cmd cmdSetFWUpdateApplyTime = 0xF8;
+static constexpr Cmd cmdGetFWUpdateApplyTime = 0xF9;
 static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
 static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
 static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xCE;
@@ -521,9 +528,15 @@ static constexpr const char* propPort = "Port";
 static constexpr const char* sessionManagerService =
     "xyz.openbmc_project.SessionManager";
 static constexpr const char* sessionManagerObjPath =
-    "/xyz/openbmc_project/SessionManager";
+    "/xyz/openbmc_project/SessionManager/kvm";
 static constexpr const char* sessionManagerIntf =
-    "xyz.openbmc_project.SessionManager";
+    "xyz.openbmc_project.SessionManager.KvmSessionInfo";
+
+// Session Mananagement error code
+namespace ipmi
+{
+static constexpr Cc ipmiRequestedSessionNotAvailable = 0xCB;
+}
 
 // parameters:
 // 0: host serial port 1 and 2 normal speed
