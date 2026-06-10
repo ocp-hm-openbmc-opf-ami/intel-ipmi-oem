@@ -6815,6 +6815,162 @@ ipmi::RspType<std::vector<uint8_t>> ipmiGetManagerCertFingerPrint(
     }
 }
 
+// check if Lan over USB interface is ready
+bool isLanOverUsbReady()
+{
+    std::ifstream udcFile("/sys/kernel/config/usb_gadget/eth/UDC");
+    std::string content;
+    if (udcFile && std::getline(udcFile, content))
+    {
+        return !content.empty();
+    }
+    return false;
+}
+
+// check if Lan over USB service started
+bool isLanOverUsbStarted()
+{
+    if (std::system("systemctl is-active --quiet host-interface.service") == 0)
+        return true;
+
+    if (std::system(
+            "systemctl is-active --quiet phosphor-ipmi-net@hostusb0.socket") ==
+        0)
+        return true;
+
+    if (std::system(
+            "systemctl is-active --quiet phosphor-ipmi-net@hostusb0.service") ==
+        0)
+        return true;
+
+    return false;
+}
+
+// check if Redfish service started
+bool isRedfishInterfaceStarted()
+{
+    try
+    {
+        auto bus = sdbusplus::bus::new_default();
+
+        //  Get unit object path
+        auto method = bus.new_method_call(systemDService, systemDObjPath,
+                                          systemDMgrIntf, "GetUnit");
+
+        method.append("bmcweb.service");
+        sdbusplus::message::object_path unitPath;
+        bus.call(method).read(unitPath);
+
+        //  Read ActiveState property
+        auto propMethod = bus.new_method_call(
+            systemDService, unitPath.str.c_str(), systemDInterfaceUnit, "Get");
+
+        propMethod.append("org.freedesktop.systemd1.Unit", "ActiveState");
+
+        std::variant<std::string> state;
+        bus.call(propMethod).read(state);
+
+        return (std::get<std::string>(state) == activeState);
+    }
+    catch (const std::exception& e)
+    {
+        // Log error if needed
+        return false;
+    }
+}
+
+bool isPortOpen(int port)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+        return false;
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    bool open = (connect(sock, (sockaddr*)&addr, sizeof(addr)) == 0);
+    close(sock);
+    return open;
+}
+
+// check if Redfish interface is ready
+bool isRedfishInterfaceReady()
+{
+    if (isPortOpen(443) || isPortOpen(80))
+    {
+        // bmcweb (Redfish) ready
+        return true;
+    }
+    return false;
+}
+
+ipmi::RspType<uint8_t,           // IPMI-over-USB status byte
+              uint8_t,           // LAN-over-USB status byte
+              uint8_t>           // Redfish status byte // IANA ID
+    ipmiOemGetBmcInterfaceStatus(/*ipmi::Context::ptr ctx,*/
+                                 uint8_t parameterSelector,
+                                 uint8_t blockSelector, uint8_t interfaceList)
+{
+    if (parameterSelector != 0x01 || blockSelector != 0x00)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+    uint8_t ipmiUsbByte = 0x00;
+    uint8_t lanUsbByte = 0x00;
+    uint8_t redfishByte = 0x00;
+
+    // IPMI over USB
+    if (interfaceList & ifaceStatus::ipmiOverUsbIfc)
+    {
+        bool featureEnabled =
+            false; // since ipmi over usb not supported in onetree
+        uint8_t stateBits = ifaceStatus::ifcNotStarted;
+        bool serviceStarted = false;
+        bool serviceReady = false;
+
+        if (serviceStarted && !serviceReady)
+            stateBits = ifaceStatus::ifcStateStarted;
+        else if (serviceReady)
+            stateBits = ifaceStatus::ifcStateReady;
+        if (featureEnabled)
+            ipmiUsbByte = stateBits | 0x01;
+    }
+
+    // LAN over USB
+    if (interfaceList & ifaceStatus::lanOverUsbIfc)
+    {
+        bool featureEnabled =
+            true; // since LAN over USB is supported in OneTree
+        uint8_t stateBits = ifaceStatus::ifcNotStarted;
+        bool serviceStarted = isLanOverUsbStarted();
+        bool serviceReady = isLanOverUsbReady();
+        if (serviceStarted && !serviceReady)
+            stateBits = ifaceStatus::ifcStateStarted;
+        else if (serviceStarted && serviceReady)
+            stateBits = ifaceStatus::ifcStateReady;
+        if (featureEnabled)
+            lanUsbByte = stateBits | 0x01;
+    }
+
+    // Redfish
+    if (interfaceList & ifaceStatus::redfishIfc)
+    {
+        uint8_t stateBits = ifaceStatus::ifcNotStarted;
+        bool serviceStarted = isRedfishInterfaceStarted();
+        bool serviceReady = isRedfishInterfaceReady();
+
+        if (serviceStarted && !serviceReady)
+            stateBits = ifaceStatus::ifcStateStarted;
+        else if (serviceReady)
+            stateBits = ifaceStatus::ifcStateReady;
+        redfishByte = stateBits | 0x01; // Add feature bit
+    }
+
+    return ipmi::responseSuccess(ipmiUsbByte, lanUsbByte, redfishByte);
+}
+
 ipmi::RspType<> ipmiOEMEnDisPwrSaveMode(std::optional<uint8_t> req)
 {
     int resp;
@@ -8953,6 +9109,11 @@ static void registerOEMFunctions(void)
         ipmi::prioOpenBmcBase, ipmi::intel::netGroupExt,
         ipmi::intel::misc::cmdGetManagerCertFingerPrint, ipmi::Privilege::Admin,
         ipmi::ipmiGetManagerCertFingerPrint);
+
+    // <Get BMC Interfaces status>
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdOEMGetBmcInterfaceStatus, Privilege::Admin,
+                    ipmiOemGetBmcInterfaceStatus);
 
     // <Enable Disable Power Save Mode>
     registerHandler(prioOemBase, ami::netFnGeneral,

@@ -16,9 +16,18 @@
 
 #pragma once
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <unistd.h>
+
 #include <ipmid/api-types.hpp>
 #include <user_channel/user_layer.hpp>
 
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 namespace ipmi
 {
 namespace intel
@@ -252,6 +261,7 @@ static constexpr Cmd cmdOEMSetFirewallConfiguration = 0x76;
 static constexpr Cmd cmdOEMGetFirewallConfiguration = 0x77;
 static constexpr Cmd cmdOEMGetSELPolicy = 0x7E;
 static constexpr Cmd cmdOEMSetSELPolicy = 0x7F;
+static constexpr Cmd cmdOEMGetBmcInterfaceStatus = 0x3D;
 static constexpr Cmd cmdOEMGetKCSStatus = 0x3E;
 static constexpr Cmd cmdOEMSetKCSStatus = 0x3F;
 static constexpr Cmd cmdOEMEnDisPowerSaveMode = 0xAA;
@@ -834,3 +844,17 @@ enum class KCSStatus : uint8_t
     Disable = 0x00,
     Enable = 0x01,
 };
+namespace ifaceStatus
+{
+
+// Interface flags
+constexpr uint8_t ipmiOverUsbIfc = 0x01;
+constexpr uint8_t lanOverUsbIfc = 0x02;
+constexpr uint8_t redfishIfc = 0x04;
+
+// Interface state
+constexpr uint8_t ifcNotStarted = 0x00;
+constexpr uint8_t ifcStateStarted = 0x02;
+constexpr uint8_t ifcStateReady = 0x06;
+
+} // namespace ifaceStatus
