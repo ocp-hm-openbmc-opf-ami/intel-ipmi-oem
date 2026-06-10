@@ -8695,7 +8695,7 @@ static void registerOEMFunctions(void)
                     Privilege::Callback, ipmiOEMSetSpecialUserPassword);
 
     registerHandler(prioOpenBmcBase, intel::netFnPlatform,
-                    intel::general::cmdReadCertficate, Privilege::Callback,
+                    intel::general::cmdReadCertficate, Privilege::sysIface,
                     ipmiOEMReadCertficate);
 
     // <Get Processor Error Config>
