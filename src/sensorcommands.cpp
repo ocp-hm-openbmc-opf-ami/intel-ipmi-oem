@@ -2860,7 +2860,7 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t> ipmiSenGetPefCapabilities()
 ipmi::RspType<uint8_t> // Present Timer Countdown Value
     ipmiSenArmPEFpostponeTimer(uint8_t pefPostponeTimer)
 {
-    uint8_t countdownTmrValue;
+    uint8_t countdownTmrValue = 0;
 
     static constexpr auto countdownValue = "TmrCountdownValue";
     // Set the Value to DBUS
@@ -2986,11 +2986,9 @@ ipmi::RspType<uint8_t,             // ParameterVersion
                            uint8_t blockSelector)
 {
     uint8_t paraVer = 0;
-    uint8_t paraData = 0;
-    uint8_t setSel = 0;
     std::vector<uint8_t> paraDataByte{};
     paraVer = ipmiPefParamVer;
-    setSel = setSelector;
+
     if (((ParamSelector >> 7) & eventData1) == eventData1)
     {
         return ipmi::responseSuccess(paraVer, paraDataByte);
@@ -3005,8 +3003,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            paraData = pefSetInPro;
-            paraDataByte.push_back(paraData);
+            paraDataByte.push_back(pefSetInPro);
             break;
         }
 
@@ -3021,8 +3018,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 Value variant = ipmi::getDbusProperty(
                     *dbus, pefBus, pefObj, pefConfInfoIntf, "PEFControl");
-                paraData = std::get<uint8_t>(variant);
-                paraDataByte.push_back(paraData);
+                paraDataByte.push_back(std::get<uint8_t>(variant));
             }
             catch (std::exception& e)
             {
@@ -3044,8 +3040,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
                 Value variant = ipmi::getDbusProperty(
                     *dbus, pefBus, pefObj, pefConfInfoIntf,
                     "PEFActionGblControl");
-                paraData = std::get<uint8_t>(variant);
-                paraDataByte.push_back(paraData);
+                paraDataByte.push_back(std::get<uint8_t>(variant));
             }
             catch (std::exception& e)
             {
@@ -3067,8 +3062,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 Value variant = ipmi::getDbusProperty(
                     *dbus, pefBus, pefObj, pefConfInfoIntf, "PEFStartupDly");
-                paraData = std::get<uint8_t>(variant);
-                paraDataByte.push_back(paraData);
+                paraDataByte.push_back(std::get<uint8_t>(variant));
             }
             catch (std::exception& e)
             {
@@ -3090,8 +3084,7 @@ ipmi::RspType<uint8_t,             // ParameterVersion
                 Value variant = ipmi::getDbusProperty(
                     *dbus, pefBus, pefObj, pefConfInfoIntf,
                     "PEFAlertStartupDly");
-                paraData = std::get<uint8_t>(variant);
-                paraDataByte.push_back(paraData);
+                paraDataByte.push_back(std::get<uint8_t>(variant));
             }
             catch (std::exception& e)
             {
@@ -3108,72 +3101,150 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            paraData = maxEventTblEntry;
-            paraDataByte.push_back(paraData);
+            paraDataByte.push_back(maxEventTblEntry);
             break;
         }
         case PEFConfParam::eventFilterTable:
         {
-            if (setSel == eventData0)
+            if (setSelector == eventData0)
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            if (setSel > maxEventTblEntry)
+            if (setSelector > maxEventTblEntry)
             {
                 return ipmi::responseParmOutOfRange();
             }
-            uint8_t offsetMask1 = 0, offsetMask2 = 0;
-            uint16_t eveData1OffsetMask;
-            std::string pefEveObjEntry =
-                eventFilterTableObj + std::to_string(setSel);
+
+            std::string objPath = getEventFilterObjectPath(setSelector);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getEventFilterArrayIndex(setSelector);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                ipmi::PropertyMap result = ipmi::getAllDbusProperties(
-                    *dbus, pefBus, pefEveObjEntry, eventFilterTableIntf);
-                paraDataByte.push_back(setSel);
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("FilterConfig")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EvtFilterAction")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("AlertPolicyNum")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventSeverity")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("GenIDByte1")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("GenIDByte2")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("SensorType")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("SensorNum")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventTrigger")));
-                eveData1OffsetMask =
-                    std::get<uint16_t>(result.at("EventData1OffsetMask"));
-                offsetMask1 = ((eveData1OffsetMask >> 8) & 0xff);
-                offsetMask2 = (eveData1OffsetMask & 0xff);
-                paraDataByte.push_back(offsetMask1);
-                paraDataByte.push_back(offsetMask2);
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData1ANDMask")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData1Cmp1")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData1Cmp2")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData2ANDMask")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData2Cmp1")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData2Cmp2")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData3ANDMask")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData3Cmp1")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("EventData3Cmp2")));
+                // Get all properties as arrays
+                auto filterConfigArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "FilterConfig"));
+                auto evtFilterActionArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EvtFilterAction"));
+                auto alertPolicyNumArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "AlertPolicyNum"));
+                auto eventSeverityArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventSeverity"));
+                auto genIDByte1Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf, "GenIDByte1"));
+                auto genIDByte2Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf, "GenIDByte2"));
+                auto sensorTypeArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf, "SensorType"));
+                auto sensorNumArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf, "SensorNum"));
+                auto eventTriggerArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventTrigger"));
+                auto eventData1ANDMaskArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData1ANDMask"));
+                auto eventData1Cmp1Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData1Cmp1"));
+                auto eventData1Cmp2Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData1Cmp2"));
+                auto eventData2ANDMaskArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData2ANDMask"));
+                auto eventData2Cmp1Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData2Cmp1"));
+                auto eventData2Cmp2Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData2Cmp2"));
+                auto eventData3ANDMaskArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData3ANDMask"));
+                auto eventData3Cmp1Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData3Cmp1"));
+                auto eventData3Cmp2Array = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "EventData3Cmp2"));
+                auto eventData1OffsetMaskArray =
+                    std::get<std::vector<uint16_t>>(ipmi::getDbusProperty(
+                        *dbus, pefBus, objPath, eventFilterTableIntf,
+                        "EventData1OffsetMask"));
+
+                if (arrayIndex >= filterConfigArray.size() ||
+                    arrayIndex >= evtFilterActionArray.size() ||
+                    arrayIndex >= alertPolicyNumArray.size() ||
+                    arrayIndex >= eventSeverityArray.size() ||
+                    arrayIndex >= genIDByte1Array.size() ||
+                    arrayIndex >= genIDByte2Array.size() ||
+                    arrayIndex >= sensorTypeArray.size() ||
+                    arrayIndex >= sensorNumArray.size() ||
+                    arrayIndex >= eventTriggerArray.size() ||
+                    arrayIndex >= eventData1OffsetMaskArray.size() ||
+                    arrayIndex >= eventData1ANDMaskArray.size() ||
+                    arrayIndex >= eventData1Cmp1Array.size() ||
+                    arrayIndex >= eventData1Cmp2Array.size() ||
+                    arrayIndex >= eventData2ANDMaskArray.size() ||
+                    arrayIndex >= eventData2Cmp1Array.size() ||
+                    arrayIndex >= eventData2Cmp2Array.size() ||
+                    arrayIndex >= eventData3ANDMaskArray.size() ||
+                    arrayIndex >= eventData3Cmp1Array.size() ||
+                    arrayIndex >= eventData3Cmp2Array.size())
+                {
+                    return ipmi::responseParmOutOfRange();
+                }
+
+                paraDataByte.push_back(setSelector);
+                paraDataByte.push_back(filterConfigArray[arrayIndex]);
+                paraDataByte.push_back(evtFilterActionArray[arrayIndex]);
+                paraDataByte.push_back(alertPolicyNumArray[arrayIndex]);
+                paraDataByte.push_back(eventSeverityArray[arrayIndex]);
+                paraDataByte.push_back(genIDByte1Array[arrayIndex]);
+                paraDataByte.push_back(genIDByte2Array[arrayIndex]);
+                paraDataByte.push_back(sensorTypeArray[arrayIndex]);
+                paraDataByte.push_back(sensorNumArray[arrayIndex]);
+                paraDataByte.push_back(eventTriggerArray[arrayIndex]);
+
+                uint16_t offsetMask = eventData1OffsetMaskArray[arrayIndex];
+                paraDataByte.push_back((offsetMask >> 8) & 0xFF);
+                paraDataByte.push_back(offsetMask & 0xFF);
+                paraDataByte.push_back(eventData1ANDMaskArray[arrayIndex]);
+                paraDataByte.push_back(eventData1Cmp1Array[arrayIndex]);
+                paraDataByte.push_back(eventData1Cmp2Array[arrayIndex]);
+                paraDataByte.push_back(eventData2ANDMaskArray[arrayIndex]);
+                paraDataByte.push_back(eventData2Cmp1Array[arrayIndex]);
+                paraDataByte.push_back(eventData2Cmp2Array[arrayIndex]);
+                paraDataByte.push_back(eventData3ANDMaskArray[arrayIndex]);
+                paraDataByte.push_back(eventData3Cmp1Array[arrayIndex]);
+                paraDataByte.push_back(eventData3Cmp2Array[arrayIndex]);
             }
             catch (std::exception& e)
             {
@@ -3186,25 +3257,37 @@ ipmi::RspType<uint8_t,             // ParameterVersion
         }
         case PEFConfParam::eventFilterTableData1:
         {
-            if (setSel == eventData0)
+            if (setSelector == eventData0)
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            if (setSel > maxEventTblEntry)
+            if (setSelector > maxEventTblEntry)
             {
                 return ipmi::responseParmOutOfRange();
             }
-            std::string pefEveObjEntry =
-                eventFilterTableObj + std::to_string(setSel);
+
+            std::string objPath = getEventFilterObjectPath(setSelector);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getEventFilterArrayIndex(setSelector);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                Value variant =
-                    ipmi::getDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                          eventFilterTableIntf, "FilterConfig");
-                paraData = std::get<uint8_t>(variant);
-                paraDataByte.push_back(setSel);
-                paraDataByte.push_back(paraData);
+                auto filterConfigArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "FilterConfig"));
+
+                if (arrayIndex >= filterConfigArray.size())
+                {
+                    return ipmi::responseParmOutOfRange();
+                }
+
+                paraDataByte.push_back(setSelector);
+                paraDataByte.push_back(filterConfigArray[arrayIndex]);
             }
             catch (std::exception& e)
             {
@@ -3220,34 +3303,53 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            paraData = maxAlertPolicyEntry;
-            paraDataByte.push_back(paraData);
+            paraDataByte.push_back(maxAlertPolicyEntry);
             break;
         }
         case PEFConfParam::alertPolicyTable:
         {
-            if (setSel == eventData0)
+            if (setSelector == eventData0)
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            if (setSel > maxAlertPolicyEntry)
+            if (setSelector > maxAlertPolicyEntry)
             {
                 return ipmi::responseParmOutOfRange();
             }
-            std::string pefAlertObjEntry =
-                alertPolicyTableObj + std::to_string(setSel);
+
+            std::string objPath = getAlertPolicyObjectPath(setSelector);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getAlertPolicyArrayIndex(setSelector);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                ipmi::PropertyMap result = ipmi::getAllDbusProperties(
-                    *dbus, pefBus, pefAlertObjEntry, alertPolicyTableIntf);
-                paraDataByte.push_back(setSel);
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("AlertNum")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("ChannelDestSel")));
-                paraDataByte.push_back(
-                    std::get<uint8_t>(result.at("AlertStingkey")));
+                auto alertNumArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf,
+                                          "AlertPolicyGroupNum"));
+                auto channelDestSelArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf, "ChannelNo"));
+                auto alertStingkeyArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf,
+                                          "AlertStingkey"));
+
+                if (arrayIndex >= alertNumArray.size() ||
+                    arrayIndex >= channelDestSelArray.size() ||
+                    arrayIndex >= alertStingkeyArray.size())
+                {
+                    return ipmi::responseParmOutOfRange();
+                }
+
+                paraDataByte.push_back(setSelector);
+                paraDataByte.push_back(alertNumArray[arrayIndex]);
+                paraDataByte.push_back(channelDestSelArray[arrayIndex]);
+                paraDataByte.push_back(alertStingkeyArray[arrayIndex]);
             }
             catch (std::exception& e)
             {
@@ -3258,7 +3360,86 @@ ipmi::RspType<uint8_t,             // ParameterVersion
             }
             break;
         }
+        case PEFConfParam::numAlertString:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            paraDataByte.push_back(maxAlertStringEntry);
+            break;
+        }
+        case PEFConfParam::alertStringKey:
+        {
+            if ((setSelector != 0) || (blockSelector != 0))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            paraDataByte.push_back(maxAlertStringEntry);
+            break;
+        }
+        case PEFConfParam::alertString:
+        {
+            if (setSelector == eventData0)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            if (setSelector > maxAlertStringEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
 
+            std::string objPath = getAlertStringObjectPath(setSelector);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getAlertStringArrayIndex(setSelector);
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+            try
+            {
+                auto alertString0Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString0"));
+                auto alertString1Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString1"));
+                auto alertString2Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString2"));
+
+                if (arrayIndex >= alertString0Array.size() ||
+                    arrayIndex >= alertString1Array.size() ||
+                    arrayIndex >= alertString2Array.size())
+                {
+                    return ipmi::responseParmOutOfRange();
+                }
+
+                paraDataByte.push_back(setSelector);
+                paraDataByte.push_back(alertString0Array[arrayIndex] & 0xFF);
+                paraDataByte.push_back(
+                    (alertString0Array[arrayIndex] >> 8) & 0xFF);
+                paraDataByte.push_back(alertString1Array[arrayIndex] & 0xFF);
+                paraDataByte.push_back(
+                    (alertString1Array[arrayIndex] >> 8) & 0xFF);
+                paraDataByte.push_back(alertString2Array[arrayIndex] & 0xFF);
+                paraDataByte.push_back(
+                    (alertString2Array[arrayIndex] >> 8) & 0xFF);
+            }
+            catch (std::exception& e)
+            {
+                lg2::error(
+                    "Failed to get all AlertString Entry property : {ERROR}",
+                    "ERROR", e);
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
         default:
             return response(ipmiCCParamNotSupported);
     }
@@ -3268,7 +3449,6 @@ ipmi::RspType<uint8_t,             // ParameterVersion
 ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                                        ipmi::message::Payload& payload)
 {
-    uint8_t paraData = 0;
     if (((ParamSelector >> 7) & eventData1) == eventData1)
     {
         return ipmi::responseInvalidFieldRequest();
@@ -3276,7 +3456,9 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
     ParamSelector = ParamSelector & enableFilter;
     if ((ParamSelector == static_cast<uint8_t>(PEFConfParam::numEventFilter)) ||
         (ParamSelector ==
-         static_cast<uint8_t>(PEFConfParam::numAlertPolicyTable)))
+         static_cast<uint8_t>(PEFConfParam::numAlertPolicyTable)) ||
+        (ParamSelector == static_cast<uint8_t>(PEFConfParam::numAlertString)) ||
+        (ParamSelector == static_cast<uint8_t>(PEFConfParam::alertStringKey)))
     {
         return response(ipmiCCParamReadOnly);
     }
@@ -3287,6 +3469,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             uint8_t setComplete = 0x00;
             uint8_t setInProgress = 0x01;
             uint8_t commitWrite = 0x02;
+            uint8_t paraData;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
@@ -3305,6 +3488,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         }
         case PEFConfParam::pefControl:
         {
+            uint8_t paraData;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
@@ -3329,6 +3513,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         }
         case PEFConfParam::pefActionGlobalControl:
         {
+            uint8_t paraData;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
@@ -3354,6 +3539,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         }
         case PEFConfParam::pefStartupDelay:
         {
+            uint8_t paraData;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
@@ -3374,6 +3560,7 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         }
         case PEFConfParam::pefAlertStartupDelay:
         {
+            uint8_t paraData;
             if (payload.unpack(paraData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
@@ -3396,117 +3583,205 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         case PEFConfParam::eventFilterTable:
         {
             std::vector<uint8_t> entryData;
-            uint16_t offsetMask = 0, tmpOffsetMask = 0;
-            // uint8_t maxEventTblEntry = 0x40;
-            uint8_t evenSevtmp;
             if (payload.unpack(entryData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
             }
 
-            if (entryData.size() > 21 || entryData.size() < 21)
+            if (entryData.size() != 21)
             {
+                lg2::error("eventFilterTable: Expected 21 bytes, got {SIZE}",
+                           "SIZE", entryData.size());
                 return ipmi::responseReqDataLenInvalid();
             }
 
-            if (entryData.at(0) == 0x00)
-            {
-                return ipmi::responseInvalidFieldRequest();
-            }
-
-            if (entryData.at(0) > maxEventTblEntry)
+            uint8_t setSel = entryData.at(0);
+            if (setSel == 0x00 || setSel > maxEventTblEntry)
             {
                 return ipmi::responseParmOutOfRange();
             }
 
-            if (((entryData.at(1) & flterConfigRrve1) != 0) ||
-                (((entryData.at(1) >> 5) & flterConfigRrve2) ==
-                 flterConfigRrve2) ||
-                (((entryData.at(1) >> 5) & eventData1) == eventData1))
+            std::string objPath = getEventFilterObjectPath(setSel);
+            if (objPath.empty())
             {
-                return ipmi::responseInvalidFieldRequest();
+                return ipmi::responseParmOutOfRange();
             }
 
-            if ((((entryData.at(2) >> 7) & eventData1) == eventData1) ||
-                (((entryData.at(3) >> 7) & eventData1) == eventData1))
-            {
-                return ipmi::responseInvalidFieldRequest();
-            }
-
-            evenSevtmp = entryData.at(4);
-            if ((((~evenSevtmp) + 1) & entryData.at(4)) != entryData.at(4))
-            {
-                return ipmi::responseInvalidFieldRequest();
-            }
-            std::string pefEveObjEntry =
-                eventFilterTableObj + std::to_string(entryData.at(0));
+            uint8_t arrayIndex = getEventFilterArrayIndex(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+            lg2::info(
+                "Setting EventFilterTable: setSel={SEL}, objPath={PATH}, arrayIndex={IDX}",
+                "SEL", setSel, "PATH", objPath.c_str(), "IDX", arrayIndex);
+
             try
             {
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "FilterConfig",
-                                      entryData.at(1));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EvtFilterAction",
-                                      entryData.at(2));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "AlertPolicyNum",
-                                      entryData.at(3));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventSeverity",
-                                      entryData.at(4));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "GenIDByte1",
-                                      entryData.at(5));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "GenIDByte2",
-                                      entryData.at(6));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "SensorType",
-                                      entryData.at(7));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "SensorNum",
-                                      entryData.at(8));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventTrigger",
-                                      entryData.at(9));
-                tmpOffsetMask = entryData.at(10);
-                offsetMask = ((tmpOffsetMask << 8) | (entryData.at(11) & 0xff));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf,
-                                      "EventData1OffsetMask", offsetMask);
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData1ANDMask",
-                                      entryData.at(12));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData1Cmp1",
-                                      entryData.at(13));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData1Cmp2",
-                                      entryData.at(14));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData2ANDMask",
-                                      entryData.at(15));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData2Cmp1",
-                                      entryData.at(16));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData2Cmp2",
-                                      entryData.at(17));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData3ANDMask",
-                                      entryData.at(18));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData3Cmp1",
-                                      entryData.at(19));
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
-                                      eventFilterTableIntf, "EventData3Cmp2",
-                                      entryData.at(20));
+                const size_t ARRAY_SIZE =
+                    10; // Fixed size from D-Bus introspection
+
+                // Helper to get property as vector using existing
+                // getDbusProperty
+                auto getProperty =
+                    [&](const std::string& propName) -> std::vector<uint8_t> {
+                    try
+                    {
+                        Value v = ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                                        eventFilterTableIntf,
+                                                        propName);
+                        return std::get<std::vector<uint8_t>>(v);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        lg2::warning("Failed to get property {PROP}: {ERROR}",
+                                     "PROP", propName.c_str(), "ERROR",
+                                     e.what());
+                        return std::vector<uint8_t>(ARRAY_SIZE, 0);
+                    }
+                };
+
+                auto getProperty16 =
+                    [&](const std::string& propName) -> std::vector<uint16_t> {
+                    try
+                    {
+                        Value v = ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                                        eventFilterTableIntf,
+                                                        propName);
+                        return std::get<std::vector<uint16_t>>(v);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        lg2::warning("Failed to get property {PROP}: {ERROR}",
+                                     "PROP", propName.c_str(), "ERROR",
+                                     e.what());
+                        return std::vector<uint16_t>(ARRAY_SIZE, 0);
+                    }
+                };
+
+                // Read all current arrays
+                auto filterConfig = getProperty("FilterConfig");
+                auto evtFilterAction = getProperty("EvtFilterAction");
+                auto alertPolicyNum = getProperty("AlertPolicyNum");
+                auto eventSeverity = getProperty("EventSeverity");
+                auto genIDByte1 = getProperty("GenIDByte1");
+                auto genIDByte2 = getProperty("GenIDByte2");
+                auto sensorType = getProperty("SensorType");
+                auto sensorNum = getProperty("SensorNum");
+                auto eventTrigger = getProperty("EventTrigger");
+                auto eventFilterTableEntry =
+                    getProperty("EventFilterTableEntry");
+                auto eventData1ANDMask = getProperty("EventData1ANDMask");
+                auto eventData1Cmp1 = getProperty("EventData1Cmp1");
+                auto eventData1Cmp2 = getProperty("EventData1Cmp2");
+                auto eventData2ANDMask = getProperty("EventData2ANDMask");
+                auto eventData2Cmp1 = getProperty("EventData2Cmp1");
+                auto eventData2Cmp2 = getProperty("EventData2Cmp2");
+                auto eventData3ANDMask = getProperty("EventData3ANDMask");
+                auto eventData3Cmp1 = getProperty("EventData3Cmp1");
+                auto eventData3Cmp2 = getProperty("EventData3Cmp2");
+                auto eventData1OffsetMask =
+                    getProperty16("EventData1OffsetMask");
+
+                // Ensure arrays have size ARRAY_SIZE
+                auto ensureSize = [&](auto& arr) {
+                    if (arr.size() != ARRAY_SIZE)
+                    {
+                        arr.resize(ARRAY_SIZE, 0);
+                    }
+                };
+
+                ensureSize(filterConfig);
+                ensureSize(evtFilterAction);
+                ensureSize(alertPolicyNum);
+                ensureSize(eventSeverity);
+                ensureSize(genIDByte1);
+                ensureSize(genIDByte2);
+                ensureSize(sensorType);
+                ensureSize(sensorNum);
+                ensureSize(eventTrigger);
+                ensureSize(eventFilterTableEntry);
+                ensureSize(eventData1ANDMask);
+                ensureSize(eventData1Cmp1);
+                ensureSize(eventData1Cmp2);
+                ensureSize(eventData2ANDMask);
+                ensureSize(eventData2Cmp1);
+                ensureSize(eventData2Cmp2);
+                ensureSize(eventData3ANDMask);
+                ensureSize(eventData3Cmp1);
+                ensureSize(eventData3Cmp2);
+                ensureSize(eventData1OffsetMask);
+
+                // Update the specific index
+                // Note: FilterConfig (entryData[1]) is kept as-is from current
+                // value
+                evtFilterAction[arrayIndex] = entryData.at(2);
+                alertPolicyNum[arrayIndex] = entryData.at(3);
+                eventSeverity[arrayIndex] = entryData.at(4);
+                genIDByte1[arrayIndex] = entryData.at(5);
+                genIDByte2[arrayIndex] = entryData.at(6);
+                sensorType[arrayIndex] = entryData.at(7);
+                sensorNum[arrayIndex] = entryData.at(8);
+                eventTrigger[arrayIndex] = entryData.at(9);
+
+                uint16_t offsetMask =
+                    (static_cast<uint16_t>(entryData.at(10)) << 8) |
+                    static_cast<uint16_t>(entryData.at(11));
+                eventData1OffsetMask[arrayIndex] = offsetMask;
+
+                eventData1ANDMask[arrayIndex] = entryData.at(12);
+                eventData1Cmp1[arrayIndex] = entryData.at(13);
+                eventData1Cmp2[arrayIndex] = entryData.at(14);
+                eventData2ANDMask[arrayIndex] = entryData.at(15);
+                eventData2Cmp1[arrayIndex] = entryData.at(16);
+                eventData2Cmp2[arrayIndex] = entryData.at(17);
+                eventData3ANDMask[arrayIndex] = entryData.at(18);
+                eventData3Cmp1[arrayIndex] = entryData.at(19);
+                eventData3Cmp2[arrayIndex] = entryData.at(20);
+
+                // Write back all arrays using existing setDbusProperty
+                auto setProperty = [&](const std::string& propName,
+                                       const auto& arr) {
+                    try
+                    {
+                        ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                              eventFilterTableIntf, propName,
+                                              ipmi::Value(arr));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        lg2::warning("Failed to set {PROP}: {ERROR}", "PROP",
+                                     propName.c_str(), "ERROR", e.what());
+                    }
+                };
+
+                setProperty("FilterConfig", filterConfig);
+                setProperty("EvtFilterAction", evtFilterAction);
+                setProperty("AlertPolicyNum", alertPolicyNum);
+                setProperty("EventSeverity", eventSeverity);
+                setProperty("GenIDByte1", genIDByte1);
+                setProperty("GenIDByte2", genIDByte2);
+                setProperty("SensorType", sensorType);
+                setProperty("SensorNum", sensorNum);
+                setProperty("EventTrigger", eventTrigger);
+                setProperty("EventFilterTableEntry", eventFilterTableEntry);
+                setProperty("EventData1ANDMask", eventData1ANDMask);
+                setProperty("EventData1Cmp1", eventData1Cmp1);
+                setProperty("EventData1Cmp2", eventData1Cmp2);
+                setProperty("EventData2ANDMask", eventData2ANDMask);
+                setProperty("EventData2Cmp1", eventData2Cmp1);
+                setProperty("EventData2Cmp2", eventData2Cmp2);
+                setProperty("EventData3ANDMask", eventData3ANDMask);
+                setProperty("EventData3Cmp1", eventData3Cmp1);
+                setProperty("EventData3Cmp2", eventData3Cmp2);
+                setProperty("EventData1OffsetMask", eventData1OffsetMask);
+
+                lg2::info("Successfully set EventFilterTable entry {SEL}",
+                          "SEL", setSel);
+                return ipmi::responseSuccess();
             }
-            catch (std::exception& e)
+            catch (const std::exception& e)
             {
-                lg2::error("Failed to set Event filtering properties : {ERROR}",
-                           "ERROR", e);
+                lg2::error("Failed to set Event filtering properties: {ERROR}",
+                           "ERROR", e.what());
                 return ipmi::responseUnspecifiedError();
             }
             break;
@@ -3518,18 +3793,17 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
             {
                 return ipmi::responseReqDataLenInvalid();
             }
-            if (entryData.size() > 2 || entryData.size() < 2)
+            if (entryData.size() != 2)
             {
                 return ipmi::responseReqDataLenInvalid();
             }
-            if (entryData.at(0) == 0x00)
-            {
-                return ipmi::responseInvalidFieldRequest();
-            }
-            if (entryData.at(0) > maxEventTblEntry)
+
+            uint8_t setSel = entryData.at(0);
+            if (setSel == 0x00 || setSel > maxEventTblEntry)
             {
                 return ipmi::responseParmOutOfRange();
             }
+
             if (((entryData.at(1) & flterConfigRrve1) != 0) ||
                 (((entryData.at(1) >> 5) & flterConfigRrve2) ==
                  flterConfigRrve2) ||
@@ -3538,14 +3812,31 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
                 return ipmi::responseInvalidFieldRequest();
             }
 
-            std::string pefEveObjEntry =
-                eventFilterTableObj + std::to_string(entryData.at(0));
+            std::string objPath = getEventFilterObjectPath(setSel);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getEventFilterArrayIndex(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                ipmi::setDbusProperty(*dbus, pefBus, pefEveObjEntry,
+                auto filterConfigArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          eventFilterTableIntf,
+                                          "FilterConfig"));
+
+                if (arrayIndex >= filterConfigArray.size())
+                {
+                    filterConfigArray.resize(arrayIndex + 1);
+                }
+
+                filterConfigArray[arrayIndex] = entryData.at(1);
+
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
                                       eventFilterTableIntf, "FilterConfig",
-                                      entryData.at(1));
+                                      filterConfigArray);
             }
             catch (std::exception& e)
             {
@@ -3558,45 +3849,151 @@ ipmi::RspType<> ipmiPefSetConfParamCmd(uint8_t ParamSelector,
         case PEFConfParam::alertPolicyTable:
         {
             std::vector<uint8_t> entryData;
-            // uint8_t NumAlertPolicyEntry = 0x07;
             if (payload.unpack(entryData) || !payload.fullyUnpacked())
             {
                 return ipmi::responseReqDataLenInvalid();
             }
-            if (entryData.size() > 4 || entryData.size() < 4)
+            if (entryData.size() != 4)
             {
                 return ipmi::responseReqDataLenInvalid();
             }
-            if ((entryData.at(0) == eventData0) ||
-                ((entryData.at(0) & reserveBit1) == reserveBit1) ||
+
+            uint8_t setSel = entryData.at(0);
+            if (setSel == 0x00 || setSel > maxAlertPolicyEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            if ((entryData.at(0) & reserveBit1) == reserveBit1 ||
                 ((entryData.at(1) & numAlertPolicyEntry) > 4) ||
                 ((entryData.at(1) & pefControlValue) == 0))
             {
                 return ipmi::responseInvalidFieldRequest();
             }
-            if (entryData.at(0) > maxAlertPolicyEntry)
+
+            std::string objPath = getAlertPolicyObjectPath(setSel);
+            if (objPath.empty())
             {
                 return ipmi::responseParmOutOfRange();
             }
 
-            std::string pefAlertObjEntry =
-                alertPolicyTableObj + std::to_string(entryData.at(0));
+            uint8_t arrayIndex = getAlertPolicyArrayIndex(setSel);
             std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
             try
             {
-                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
-                                      alertPolicyTableIntf, "AlertNum",
-                                      entryData.at(1));
-                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
-                                      alertPolicyTableIntf, "ChannelDestSel",
-                                      entryData.at(2));
-                ipmi::setDbusProperty(*dbus, pefBus, pefAlertObjEntry,
+                auto alertNumArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf,
+                                          "AlertPolicyGroupNum"));
+                auto channelDestSelArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf, "ChannelNo"));
+                auto alertStingkeyArray = std::get<std::vector<uint8_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertPolicyTableIntf,
+                                          "AlertStingkey"));
+
+                if (arrayIndex >= alertNumArray.size())
+                    alertNumArray.resize(arrayIndex + 1);
+                if (arrayIndex >= channelDestSelArray.size())
+                    channelDestSelArray.resize(arrayIndex + 1);
+                if (arrayIndex >= alertStingkeyArray.size())
+                    alertStingkeyArray.resize(arrayIndex + 1);
+
+                alertNumArray[arrayIndex] = entryData.at(1);
+                channelDestSelArray[arrayIndex] = entryData.at(2);
+                alertStingkeyArray[arrayIndex] = entryData.at(3);
+
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                      alertPolicyTableIntf,
+                                      "AlertPolicyGroupNum", alertNumArray);
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                      alertPolicyTableIntf, "ChannelNo",
+                                      channelDestSelArray);
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
                                       alertPolicyTableIntf, "AlertStingkey",
-                                      entryData.at(3));
+                                      alertStingkeyArray);
             }
             catch (std::exception& e)
             {
                 lg2::error("Failed to set Alert Policy properties : {ERROR}",
+                           "ERROR", e);
+                return ipmi::responseUnspecifiedError();
+            }
+            break;
+        }
+        case PEFConfParam::alertString:
+        {
+            std::vector<uint8_t> entryData;
+            if (payload.unpack(entryData) || !payload.fullyUnpacked())
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            // Alert string data: setSelector (1 byte) + 6 bytes (3 strings * 2
+            // bytes each)
+            if (entryData.size() != 7)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+
+            uint8_t setSel = entryData.at(0);
+            if (setSel == 0x00 || setSel > maxAlertStringEntry)
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            std::string objPath = getAlertStringObjectPath(setSel);
+            if (objPath.empty())
+            {
+                return ipmi::responseParmOutOfRange();
+            }
+
+            uint8_t arrayIndex = getAlertStringArrayIndex(setSel);
+            std::shared_ptr<sdbusplus::asio::connection> dbus = getSdBus();
+
+            uint16_t alertString0 = entryData.at(1) | (entryData.at(2) << 8);
+            uint16_t alertString1 = entryData.at(3) | (entryData.at(4) << 8);
+            uint16_t alertString2 = entryData.at(5) | (entryData.at(6) << 8);
+
+            try
+            {
+                auto alertString0Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString0"));
+                auto alertString1Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString1"));
+                auto alertString2Array = std::get<std::vector<uint16_t>>(
+                    ipmi::getDbusProperty(*dbus, pefBus, objPath,
+                                          alertStringTableIntf,
+                                          "AlertString2"));
+
+                if (arrayIndex >= alertString0Array.size())
+                    alertString0Array.resize(arrayIndex + 1);
+                if (arrayIndex >= alertString1Array.size())
+                    alertString1Array.resize(arrayIndex + 1);
+                if (arrayIndex >= alertString2Array.size())
+                    alertString2Array.resize(arrayIndex + 1);
+
+                alertString0Array[arrayIndex] = alertString0;
+                alertString1Array[arrayIndex] = alertString1;
+                alertString2Array[arrayIndex] = alertString2;
+
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                      alertStringTableIntf, "AlertString0",
+                                      alertString0Array);
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                      alertStringTableIntf, "AlertString1",
+                                      alertString1Array);
+                ipmi::setDbusProperty(*dbus, pefBus, objPath,
+                                      alertStringTableIntf, "AlertString2",
+                                      alertString2Array);
+            }
+            catch (std::exception& e)
+            {
+                lg2::error("Failed to set Alert String properties : {ERROR}",
                            "ERROR", e);
                 return ipmi::responseUnspecifiedError();
             }

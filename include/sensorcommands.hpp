@@ -46,8 +46,9 @@ enum class PEFConfParam : uint8_t
     numGrpCtlTableEntries = 0xE,
 };
 
-static constexpr uint8_t maxEventTblEntry = 0x28;
-static constexpr uint8_t maxAlertPolicyEntry = 0x3c;
+static constexpr uint8_t maxEventTblEntry = 0x28;    // 40 entries
+static constexpr uint8_t maxAlertPolicyEntry = 0x3c; // 60 entries
+static constexpr uint8_t maxAlertStringEntry = 0x28; // 40 entries
 static constexpr uint8_t ipmiPefParamVer = 0x11;
 static constexpr uint8_t eventData0 = 0x00;
 static constexpr uint8_t eventData1 = 0x01;
@@ -62,6 +63,13 @@ static constexpr uint8_t numAlertPolicyEntry = 0x07;
 static constexpr uint8_t flterConfigRrve1 = 0x1F;
 static constexpr uint8_t flterConfigRrve2 = 0x03;
 
+// Array sizes for D-Bus structure
+static constexpr uint8_t MAX_EVENT_FILTER_ENTRIES_PER_LIST = 10;
+static constexpr uint8_t MAX_ALERT_POLICY_ENTRIES_PER_INTF = 15;
+static constexpr uint8_t MAX_ALERT_STRING_ENTRIES_PER_LIST = 10;
+static constexpr uint8_t NUM_ETH_INTERFACES = 4;
+
+// D-Bus object paths
 static constexpr const char* pefBus = "xyz.openbmc_project.pef.alert.manager";
 static constexpr const char* pefObj = "/xyz/openbmc_project/PefAlertManager";
 static constexpr const char* pefDbusIntf =
@@ -75,14 +83,22 @@ static constexpr const char* pefPostponeTmrIface =
     "xyz.openbmc_project.pef.PEFPostponeTimer";
 static constexpr const char* pefPostponeCountDownIface =
     "xyz.openbmc_project.pef.CountdownTmr";
-static constexpr const char* eventFilterTableObj =
-    "/xyz/openbmc_project/PefAlertManager/EventFilterTable/Entry";
+
+// D-Bus paths for tables
+static constexpr const char* eventFilterTableBaseObj =
+    "/xyz/openbmc_project/PefAlertManager/EventFilterTable/List";
 static constexpr const char* eventFilterTableIntf =
     "xyz.openbmc_project.pef.EventFilterTable";
-static constexpr const char* alertPolicyTableObj =
-    "/xyz/openbmc_project/PefAlertManager/AlertPolicyTable/Entry";
+static constexpr const char* alertPolicyTableBaseObj =
+    "/xyz/openbmc_project/PefAlertManager/AlertPolicyTable/PolicyList_";
 static constexpr const char* alertPolicyTableIntf =
     "xyz.openbmc_project.pef.AlertPolicyTable";
+static constexpr const char* alertStringTableBaseObj =
+    "/xyz/openbmc_project/PefAlertManager/AlertStringTable/List";
+static constexpr const char* alertStringTableIntf =
+    "xyz.openbmc_project.pef.AlertStringTable";
+
+static constexpr const char* ethInterfaces[] = {"eth0", "eth1", "eth2", "eth3"};
 
 struct SensorThresholdResp
 {
@@ -230,5 +246,58 @@ struct IPMIThresholds
     std::optional<uint8_t> nonRecoverableLow;
     std::optional<uint8_t> nonRecoverableHigh;
 };
+
+// Helper functions for D-Bus array structure
+inline std::string getEventFilterObjectPath(uint8_t setSelector)
+{
+    if (setSelector == 0 || setSelector > maxEventTblEntry)
+    {
+        return "";
+    }
+    uint8_t listNum =
+        ((setSelector - 1) / MAX_EVENT_FILTER_ENTRIES_PER_LIST) + 1;
+    return std::string(eventFilterTableBaseObj) + std::to_string(listNum);
+}
+
+inline uint8_t getEventFilterArrayIndex(uint8_t setSelector)
+{
+    return (setSelector - 1) % MAX_EVENT_FILTER_ENTRIES_PER_LIST;
+}
+
+inline std::string getAlertPolicyObjectPath(uint8_t setSelector)
+{
+    if (setSelector == 0 || setSelector > maxAlertPolicyEntry)
+    {
+        return "";
+    }
+    uint8_t interfaceIndex =
+        (setSelector - 1) / MAX_ALERT_POLICY_ENTRIES_PER_INTF;
+    if (interfaceIndex >= NUM_ETH_INTERFACES)
+    {
+        interfaceIndex = NUM_ETH_INTERFACES - 1;
+    }
+    return std::string(alertPolicyTableBaseObj) + ethInterfaces[interfaceIndex];
+}
+
+inline uint8_t getAlertPolicyArrayIndex(uint8_t setSelector)
+{
+    return (setSelector - 1) % MAX_ALERT_POLICY_ENTRIES_PER_INTF;
+}
+
+inline std::string getAlertStringObjectPath(uint8_t setSelector)
+{
+    if (setSelector == 0 || setSelector > maxAlertStringEntry)
+    {
+        return "";
+    }
+    uint8_t listNum =
+        ((setSelector - 1) / MAX_ALERT_STRING_ENTRIES_PER_LIST) + 1;
+    return std::string(alertStringTableBaseObj) + std::to_string(listNum);
+}
+
+inline uint8_t getAlertStringArrayIndex(uint8_t setSelector)
+{
+    return (setSelector - 1) % MAX_ALERT_STRING_ENTRIES_PER_LIST;
+}
 
 } // namespace ipmi
