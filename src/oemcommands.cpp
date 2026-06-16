@@ -8704,7 +8704,7 @@ ipmi::RspType<uint16_t, uint8_t, std::vector<uint8_t>>
     if (offset >= extendedSelMaxSize)
     {
         log<level::ERR>("Parameter Out Of Range");
-        return ipmi::responseParmOutOfRange();
+        return ipmi::responseInvalidFieldRequest();
     }
 
     if (readLen > (extendedSelMaxSize - offset))
