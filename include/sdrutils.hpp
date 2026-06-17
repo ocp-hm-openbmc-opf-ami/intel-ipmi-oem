@@ -467,6 +467,8 @@ inline static bool getSensorNumMap(std::shared_ptr<SensorNumMap>& sensorNumMap)
         sensorNumMapPtr->insert(
             SensorNumMap::value_type(sensorNum, sensor.first));
     }
+    sensorNumMap = sensorNumMapPtr;
+    sensorNumMapUpated = true;
 #else
 
     uint16_t sensorNum = 0;
