@@ -46,8 +46,10 @@ static constexpr const char* softwareActivationIntf =
     "xyz.openbmc_project.Software.Activation";
 static constexpr const char* associationIntf =
     "xyz.openbmc_project.Association";
-static constexpr const char* softwareFunctionalPath =
+static constexpr const char* softwareBmcFunctionalPath =
     "/xyz/openbmc_project/software/bmc/functional";
+static constexpr const char* softwareFunctionalPath =
+    "/xyz/openbmc_project/software/functional";
 
 static constexpr const char* currentBmcStateProp = "CurrentBMCState";
 static constexpr const char* bmcStateReadyStr =
@@ -128,6 +130,9 @@ int initBMCDeviceState(ipmi::Context::ptr ctx)
  *
  * It reads the active firmware versions by checking functional
  * endpoints association and matching the input version purpose string.
+ * Tries the new software manager path
+ * (/xyz/openbmc_project/software/bmc/functional) first, then falls back
+ * to the legacy path (/xyz/openbmc_project/software/functional).
  * ctx[in]                - ipmi context.
  * reqVersionPurpose[in]  - Version purpose which need to be read.
  * version[out]           - Output Version string.
@@ -141,13 +146,21 @@ int getActiveSoftwareVersionInfo(ipmi::Context::ptr ctx,
 {
     std::vector<std::string> activeEndPoints;
     boost::system::error_code ec = ipmi::getDbusProperty(
-        ctx, ObjectMapper::default_service, softwareFunctionalPath,
+        ctx, ObjectMapper::default_service, softwareBmcFunctionalPath,
         associationIntf, "endpoints", activeEndPoints);
     if (ec)
     {
-        phosphor::logging::log<phosphor::logging::level::ERR>(
-            "Failed to get Active firmware version endpoints.");
-        return -1;
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Failed to get endpoints from new path, trying legacy path");
+        ec = ipmi::getDbusProperty(ctx, ObjectMapper::default_service,
+                                   softwareFunctionalPath, associationIntf,
+                                   "endpoints", activeEndPoints);
+        if (ec)
+        {
+            phosphor::logging::log<phosphor::logging::level::ERR>(
+                "Failed to get Active firmware version endpoints.");
+            return -1;
+        }
     }
 
     for (auto& activeEndPoint : activeEndPoints)
@@ -264,9 +277,9 @@ std::optional<MetaRevision> convertIntelVersion(std::string& s)
 
     // pattern2/3: 1 full match + 6 capture groups
     constexpr size_t intelVersionMatchCount = 7;
-    // pattern2 support the dev tag
+    // pattern2 support the dev tag (case-insensitive Dev/dev, optional 3-part)
     std::regex pattern2(
-        "(\\w+?)-(\\d+?).(\\d+?)[-.]dev-(\\d+?)-g(\\w+?)-(\\w+?)");
+        "(\\w+?)-(\\d+?)\\.(\\d+?)(?:\\.\\d+)?-[Dd]ev-(\\d+?)-g(\\w+?)-(\\w+?)");
     // pattern3 supports without dev tag
     std::regex pattern3("(\\w+?)-(\\d+?).(\\d+?)[-.](\\d+?)-g(\\w+?)-(\\w+?)");
 
