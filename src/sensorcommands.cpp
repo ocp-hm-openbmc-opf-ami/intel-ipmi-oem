@@ -1003,6 +1003,8 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
         uint8_t eventByte2 = (assertions >> 8);
         operation |=
             static_cast<uint8_t>(IPMISensorReadingByte2::sensorScanningEnable);
+        operation |=
+            static_cast<uint8_t>(IPMISensorReadingByte2::eventMessagesEnable);
 
         return ipmi::responseSuccess(value, operation, eventByte1, eventByte2);
     }
