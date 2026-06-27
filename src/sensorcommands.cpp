@@ -1863,10 +1863,10 @@ ipmi::RspType<uint8_t, // enabled
                                           nonRecoverabHigh->second);
                 if (std::isfinite(value))
                 {
-                    assertionEnabledLsb |= static_cast<uint8_t>(
+                    assertionEnabledMsb |= static_cast<uint8_t>(
                         IPMISensorEventEnableThresholds::
                             upperNonRecoverableGoingHigh);
-                    deassertionEnabledLsb |= static_cast<uint8_t>(
+                    deassertionEnabledMsb |= static_cast<uint8_t>(
                         IPMISensorEventEnableThresholds::
                             upperNonRecoverableGoingLow);
                 }
@@ -2396,6 +2396,32 @@ bool constructSensorSdr(
             IPMISensorEventEnableThresholds::lowerNonCriticalGoingLow);
         record.body.discreteReadingSettingMask[0] |=
             static_cast<uint8_t>(IPMISensorReadingByte3::lowerNonCritical);
+    }
+    if (thresholdData.nonRecoverableHigh)
+    {
+        record.body.upperNonrecoverableThreshold =
+            *thresholdData.nonRecoverableHigh;
+        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::nonRecoverableThreshold);
+        record.body.supportedDeassertions[1] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
+        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::upperNonRecoverableGoingHigh);
+        record.body.discreteReadingSettingMask[0] |=
+            static_cast<uint8_t>(IPMISensorReadingByte3::upperNonRecoverable);
+    }
+    if (thresholdData.nonRecoverableLow)
+    {
+        record.body.lowerNonrecoverableThreshold =
+            *thresholdData.nonRecoverableLow;
+        record.body.supportedAssertions[1] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::nonRecoverableThreshold);
+        record.body.supportedDeassertions[0] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::lowerNonRecoverableGoingLow);
+        record.body.supportedAssertions[0] |= static_cast<uint8_t>(
+            IPMISensorEventEnableThresholds::lowerNonRecoverableGoingLow);
+        record.body.discreteReadingSettingMask[0] |=
+            static_cast<uint8_t>(IPMISensorReadingByte3::lowerNonRecoverable);
     }
 
     // everything that is readable is setable
