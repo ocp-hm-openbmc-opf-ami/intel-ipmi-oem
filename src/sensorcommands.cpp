@@ -252,7 +252,8 @@ static constexpr const char* discreteInterface =
 static constexpr const char* eventOnlyInterface =
     "xyz.openbmc_project.Sensor.EventOnly";
 
-constexpr const char* pldmService = "xyz.openbmc_project.PLDM";
+constexpr const char *pldmService = "xyz.openbmc_project.PLDM",
+                     *nsmService = "xyz.openbmc_project.NSM";
 
 bool getDiscreteStatus(const SensorMap& sensorMap,
                        [[maybe_unused]] const std::string path,
@@ -1071,7 +1072,9 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
     getSensorMaxMin(sensorMap, max, min);
 
     // hardcoded max value as 255 to list pldm sensors
-    if (connection == sensor::pldmService)
+    if (connection == sensor::pldmService ||
+        (connection == sensor::nsmService &&
+         path.find("/energy/") != std::string::npos))
     {
         if (max > 255.0 || max < 1.0 || max < min)
         {
@@ -1267,6 +1270,11 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     if (status)
     {
         return ipmi::response(status);
+    }
+
+    if (connection == sensor::nsmService)
+    {
+        return ipmi::responseIllegalCommand();
     }
 
     // if none of the threshold mask are set, nothing to do
@@ -1478,7 +1486,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
 }
 
 IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap,
-                                 const std::string& service = "")
+                                 const std::string& service = "",
+                                 const std::string& path = "")
 {
     IPMIThresholds resp;
     auto warningInterface =
@@ -1506,7 +1515,9 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap,
         getSensorMaxMin(sensorMap, max, min);
 
         // hardcoded max value as 255 to list pldm sensors
-        if (service == sensor::pldmService)
+        if (service == sensor::pldmService ||
+            (service == sensor::nsmService &&
+             path.find("/energy/") != std::string::npos))
         {
             if (max > 255.0 || max < 1.0 || max < min)
             {
@@ -1646,7 +1657,7 @@ ipmi::RspType<uint8_t, // readable
     IPMIThresholds thresholdData;
     try
     {
-        thresholdData = getIPMIThresholds(sensorMap);
+        thresholdData = getIPMIThresholds(sensorMap, connection, path);
     }
     catch (const std::exception&)
     {
@@ -2232,7 +2243,9 @@ bool constructSensorSdr(
     getSensorMaxMin(sensorMap, max, min);
 
     // hardcoded max value as 255 to list pldm sensors
-    if (service == sensor::pldmService)
+    if (service == sensor::pldmService ||
+        (service == sensor::nsmService &&
+         path.find("/energy/") != std::string::npos))
     {
         if (max > 255.0 || max < 1.0 || max < min)
         {
@@ -2343,7 +2356,7 @@ bool constructSensorSdr(
     IPMIThresholds thresholdData;
     try
     {
-        thresholdData = getIPMIThresholds(sensorMap, service);
+        thresholdData = getIPMIThresholds(sensorMap, service, path);
     }
     catch (const std::exception&)
     {
