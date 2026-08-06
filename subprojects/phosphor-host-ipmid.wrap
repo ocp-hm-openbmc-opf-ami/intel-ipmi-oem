@@ -1,6 +1,7 @@
 [wrap-git]
-url = https://github.com/openbmc/phosphor-host-ipmid
-revision = HEAD
+url = https://git.ami.com/core/ami-bmc/one-tree/core/phosphor-host-ipmid.git
+revision = OT-19932_UT_Coverage
+diff_files = phosphor-host-ipmid/0001-OT-25156-Fix-build-error-with-updated-sdbusplus-obj.patch
 
 [provide]
 libipmid = ipmid_dep

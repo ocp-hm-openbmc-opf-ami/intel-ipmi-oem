@@ -31,7 +31,11 @@
 #include <ipmid/api.hpp>
 #include <ipmid/message.hpp>
 #include <ipmid/utils.hpp>
+#ifdef UNIT_TESTING
+#include <selutility.hpp>
+#else
 #include <phosphor-ipmi-host/selutility.hpp>
+#endif
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/message/types.hpp>

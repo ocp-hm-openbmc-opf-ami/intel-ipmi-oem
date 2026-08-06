@@ -29,7 +29,11 @@
 #include <ipmid/api.hpp>
 #include <ipmid/entity_map_json.hpp>
 #include <ipmid/utils.hpp>
+#ifdef UNIT_TESTING
+#include <selutility.hpp>
+#else
 #include <phosphor-ipmi-host/selutility.hpp>
+#endif
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/elog.hpp>
 #include <phosphor-logging/lg2.hpp>

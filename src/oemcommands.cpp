@@ -67,8 +67,11 @@
 */
 
 #include "storagecommands.hpp"
-
+#ifdef UNIT_TESTING
+#include <selutility.hpp>
+#else
 #include <phosphor-ipmi-host/selutility.hpp>
+#endif
 #include <sdrutils.hpp>
 
 #include <algorithm>
