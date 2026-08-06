@@ -1,6 +1,6 @@
 [wrap-git]
 url = https://git.ami.com/core/ami-bmc/one-tree/core/phosphor-host-ipmid.git
-revision = OT-19932_UT_Coverage
+revision = HEAD
 diff_files = phosphor-host-ipmid/0001-OT-25156-Fix-build-error-with-updated-sdbusplus-obj.patch
 
 [provide]
