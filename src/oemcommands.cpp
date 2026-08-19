@@ -71,6 +71,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -7790,6 +7791,106 @@ ipmi::RspType<> ipmiOEMSetPreserveConfig(uint32_t preserve)
     }
 }
 
+static std::string shellEscapeSingleQuotes(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (char c : value)
+    {
+        if (c == '\'')
+        {
+            escaped += "'\\''";
+        }
+        else
+        {
+            escaped += c;
+        }
+    }
+    return escaped;
+}
+
+static bool runFwSetEnv(const std::string& name, const std::string& value)
+{
+    std::string cmd = "fw_setenv " + name + " '" +
+                      shellEscapeSingleQuotes(value) + "'";
+    return (std::system(cmd.c_str()) == 0);
+}
+
+static bool isPrintableAscii(const std::vector<uint8_t>& data)
+{
+    for (uint8_t c : data)
+    {
+        if (c < 0x20 || c > 0x7e)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+ipmi::RspType<> ipmiOEMSetRecoveryInfo(uint8_t parameterSelector,
+                                       uint8_t blockSelector,
+                                       std::vector<uint8_t> parameterData)
+{
+    if (blockSelector != 0)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    switch (parameterSelector)
+    {
+        case ami::general::recovery::paramTftpServerIp:
+            if (parameterData.size() != 4)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            {
+                std::string ip = std::to_string(parameterData[0]) + "." +
+                                 std::to_string(parameterData[1]) + "." +
+                                 std::to_string(parameterData[2]) + "." +
+                                 std::to_string(parameterData[3]);
+                if (!runFwSetEnv("recovery_tftp_ip", ip))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        case ami::general::recovery::paramImageName:
+            if (parameterData.empty() || parameterData.size() > 42 ||
+                !isPrintableAscii(parameterData))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            {
+                std::string imageName(parameterData.begin(), parameterData.end());
+                if (!runFwSetEnv("recovery_bootfile", imageName))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        case ami::general::recovery::paramRecoveryMode:
+            if (parameterData.size() != 1 || parameterData[0] > 2)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            {
+                static const char* const modes[] = {"auto", "mmc", "tftp"};
+                if (!runFwSetEnv("recovery_mode_selection",
+                                 modes[parameterData[0]]))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+}
+
 void AddExtendedlogEntry(uint8_t sensorNumber, uint8_t sensorType,
                          const std::vector<uint8_t>& extendedData,
                          std::vector<uint8_t>& selDataRecord,
@@ -8521,6 +8622,10 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdGetPreserveConfig, Privilege::User,
                     ipmiOEMGetPreserveConfig);
+
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetRecoveryInfo, Privilege::Admin,
+                    ipmiOEMSetRecoveryInfo);
 
     // <Add Extended SEL data>
     registerHandler(prioOemBase, ami::netFnGeneral,
