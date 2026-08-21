@@ -31,7 +31,11 @@
 #include <ipmid/api.hpp>
 #include <ipmid/message.hpp>
 #include <ipmid/utils.hpp>
+#ifdef UNIT_TESTING
+#include <selutility.hpp>
+#else
 #include <phosphor-ipmi-host/selutility.hpp>
+#endif
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/message/types.hpp>
@@ -967,12 +971,27 @@ void recalculateHashes()
                 if (fruIdIter != properties.end())
                 {
                     auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
+                    if (fruIdValue == nullptr)
+                    {
+                        std::cerr << "FruId has invalid type\n";
+                        continue;
+                    }
                     fruHash = static_cast<uint8_t>(*fruIdValue);
 
                     auto fruSizeIter = properties.find("FruSize");
+                    if (fruSizeIter == properties.end())
+                    {
+                        std::cerr << "FruSize property not found\n";
+                        continue;
+                    }
                     auto fruSizeValue =
-                        std::get_if<uint8_t>(&fruSizeIter->second);
-                    uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+                        std::get_if<uint16_t>(&fruSizeIter->second);
+                    if (fruSizeValue == nullptr)
+                    {
+                        std::cerr << "FruSize has invalid type\n";
+                        continue;
+                    }
+                    uint16_t fruSize = static_cast<uint16_t>(*fruSizeValue);
                     fruMap.push_back(std::make_pair(fruHash, fruSize));
                     break;
                 }
@@ -1067,10 +1086,10 @@ ipmi::Cc getFru(ipmi::Context::ptr& ctx, uint8_t devId)
 
     if (fruCache.empty() || (fruCache.size() <= 8))
     {
-        // when fruCache is empty assume eemprom is empty and append with max
-        // fru file size 256
+        // When fruCache is empty, assume the EEPROM is blank. Use the
+        // configured FruSize for the device; default to 255 bytes otherwise.
 
-        uint8_t configSize = 0xff;
+        uint16_t configSize = 0x00ff;
         for (auto& i : fruMap)
         {
             if (i.first == devId)
@@ -2344,11 +2363,21 @@ void initFruConfig()
         if (fruIdIter != properties.end())
         {
             auto fruIdValue = std::get_if<uint8_t>(&fruIdIter->second);
+            if (fruIdValue == nullptr)
+            {
+                std::cerr << "FruId has invalid type\n";
+                continue;
+            }
             fruId = static_cast<uint8_t>(*fruIdValue);
             if (fruSizeIter != properties.end())
             {
-                auto fruSizeValue = std::get_if<uint8_t>(&fruSizeIter->second);
-                uint8_t fruSize = static_cast<uint8_t>(*fruSizeValue);
+                auto fruSizeValue = std::get_if<uint16_t>(&fruSizeIter->second);
+                if (fruSizeValue == nullptr)
+                {
+                    std::cerr << "FruSize has invalid type\n";
+                    continue;
+                }
+                uint16_t fruSize = static_cast<uint16_t>(*fruSizeValue);
 
                 fruMap.push_back(std::make_pair(fruId, fruSize));
             }

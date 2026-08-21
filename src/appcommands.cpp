@@ -375,14 +375,15 @@ ipmi::RspType<std::array<uint8_t, 16>> ipmiAppGetSystemGuid(
 {
     static constexpr auto uuidInterface = "xyz.openbmc_project.Common.UUID";
     static constexpr auto uuidProperty = "UUID";
-    // Get the Inventory object implementing BMC interface
+    // Dynamically discover the object implementing the system UUID
     ipmi::DbusObjectInfo objectInfo{};
-    boost::system::error_code ec =
-        ipmi::getDbusObject(ctx, uuidInterface, objectInfo);
+    boost::system::error_code ec = ipmi::getDbusObject(
+        ctx, uuidInterface, "/xyz/openbmc_project/control", "systemGUID",
+        objectInfo);
 
     if (ec.value())
     {
-        lg2::error("Failed to locate System UUID object, "
+        lg2::error("Failed to find System UUID object, "
                    "interface: {INTERFACE}, error: {ERROR}",
                    "INTERFACE", uuidInterface, "ERROR", ec.message());
         return ipmi::responseUnspecifiedError();

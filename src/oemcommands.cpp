@@ -67,8 +67,11 @@
 */
 
 #include "storagecommands.hpp"
-
+#ifdef UNIT_TESTING
+#include <selutility.hpp>
+#else
 #include <phosphor-ipmi-host/selutility.hpp>
+#endif
 #include <sdrutils.hpp>
 
 #include <algorithm>
@@ -7645,13 +7648,11 @@ ipmi::RspType<uint8_t> ipmiOEMSetBmcServicePortValue(
 ipmi::RspType<uint16_t, uint16_t, std::vector<uint8_t>> ipmiGetBiosPostCode()
 {
     using namespace ipmi::ami::general;
-    uint64_t pcode = 0;
     uint16_t bootIndex = 1; // 1 for the latest boot cycle's POST Code
     uint16_t postVecLen = 0;
     uint16_t postVecStart = 0;
     uint16_t postRetLen = 0;
-    using postcode_t = std::tuple<uint64_t, std::vector<uint8_t>>;
-    postcode_t postCodeTup(0, {0});
+    using postcode_t = std::tuple<std::vector<uint8_t>, std::vector<uint8_t>>;
     std::vector<postcode_t> postCodeVector = {};
     std::vector<uint8_t> postCodeVectorRet = {};
 
@@ -7697,20 +7698,22 @@ ipmi::RspType<uint16_t, uint16_t, std::vector<uint8_t>> ipmiGetBiosPostCode()
 
         postVecLen = postCodeVector.size();
 
-        if (postVecLen <= cmdGetBiosPostCodeToIpmiMaxSize)
-            postVecStart = 0;
-        else
+        ssize_t totalBytes = 0;
+        postVecStart = postVecLen;
+        for (int i = static_cast<int>(postVecLen) - 1; i >= 0; i--)
         {
-            // adjust the start position so the end-portion of post code is sent
-            postVecStart = postVecLen - cmdGetBiosPostCodeToIpmiMaxSize;
+            const auto& pcodeVec = std::get<0>(postCodeVector[i]);
+            if (totalBytes + pcodeVec.size() > cmdGetBiosPostCodeToIpmiMaxSize)
+                break;
+            totalBytes += pcodeVec.size();
+            postVecStart = static_cast<uint16_t>(i);
         }
 
         for (int i = postVecStart; i < postVecLen; i++)
         {
-            postCodeTup = postCodeVector[i];
-            pcode = std::get<0>(postCodeTup);
-            postCodeVectorRet.push_back(pcode);
-            // sd_journal_print(LOG_ERR, "0x%02llx ", pcode);
+            auto& pcodeVec = std::get<0>(postCodeVector[i]);
+            postCodeVectorRet.insert(postCodeVectorRet.end(), pcodeVec.begin(),
+                                     pcodeVec.end());
         }
 
         postRetLen = postCodeVectorRet.size();
