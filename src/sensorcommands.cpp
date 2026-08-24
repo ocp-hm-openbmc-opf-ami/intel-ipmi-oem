@@ -252,7 +252,8 @@ static constexpr const char* discreteInterface =
 static constexpr const char* eventOnlyInterface =
     "xyz.openbmc_project.Sensor.EventOnly";
 
-constexpr const char* pldmService = "xyz.openbmc_project.PLDM";
+constexpr const char *pldmService = "xyz.openbmc_project.PLDM",
+                     *nsmService = "xyz.openbmc_project.NSM";
 
 bool getDiscreteStatus(const SensorMap& sensorMap,
                        [[maybe_unused]] const std::string path,
@@ -865,6 +866,24 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     std::vector<uint8_t> eventData{eventData1, eventData2.value_or(0xFF),
                                    eventData3.value_or(0xFF)};
     std::shared_ptr<sdbusplus::asio::connection> bus = getSdBus();
+    std::string severity = informationalLevel;
+
+    if (assert)
+    {
+        switch (static_cast<eventReading>(eventData1))
+        {
+            case eventReading::lowerCritGoingLow:
+            case eventReading::upperCritGoingHigh:
+                severity = errorLevel;
+                break;
+            case eventReading::lowerNonCritGoingLow:
+            case eventReading::upperNonCritGoingHigh:
+                severity = warningLevel;
+                break;
+            default:
+                severity = informationalLevel;
+        }
+    }
 
     static constexpr auto systemRecordType = 0x02;
     std::string messageID = "";
@@ -910,6 +929,90 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
 
     try
     {
+        auto getSelPolicy =
+            bus->new_method_call("xyz.openbmc_project.Settings",
+                                 "/xyz/openbmc_project/logging/settings",
+                                 "org.freedesktop.DBus.Properties", "GetAll");
+        getSelPolicy.append("xyz.openbmc_project.Logging.Settings");
+
+        try
+        {
+            auto policyReply = bus->call(getSelPolicy);
+            boost::container::flat_map<
+                std::string,
+                std::variant<std::string, std::map<std::string, bool>>>
+                selStatus;
+            policyReply.read(selStatus);
+
+            std::string selPolicy;
+            bool errorFlag = false;
+            bool infoFlag = false;
+
+            if (auto it = selStatus.find("SelPolicy"); it != selStatus.end())
+            {
+                if (auto val = std::get_if<std::string>(&(it->second)))
+                {
+                    selPolicy = *val;
+                }
+            }
+            if (auto it = selStatus.find("ErrorFlags"); it != selStatus.end())
+            {
+                if (auto flags =
+                        std::get_if<std::map<std::string, bool>>(&(it->second)))
+                {
+                    if (auto f = flags->find("ipmi"); f != flags->end())
+                    {
+                        errorFlag = f->second;
+                    }
+                }
+            }
+            if (auto it = selStatus.find("InfoFlags"); it != selStatus.end())
+            {
+                if (auto flags =
+                        std::get_if<std::map<std::string, bool>>(&(it->second)))
+                {
+                    if (auto f = flags->find("ipmi"); f != flags->end())
+                    {
+                        infoFlag = f->second;
+                    }
+                }
+            }
+
+            if (selPolicy == policyLinear)
+            {
+                if (((severity == errorLevel) || (severity == warningLevel)) &&
+                    errorFlag)
+                {
+                    return ipmi::responseOutOfSpace();
+                }
+                if ((severity == informationalLevel) && infoFlag)
+                {
+                    return ipmi::responseOutOfSpace();
+                }
+            }
+            else if (selPolicy == policyCircular)
+            {
+                lg2::info(
+                    "SEL policy is Circular; skipping linear cap pre-check");
+            }
+            else if (selPolicy.empty())
+            {
+                lg2::warning(
+                    "SEL policy is empty; continuing without policy pre-check");
+            }
+            else
+            {
+                lg2::warning(
+                    "Unsupported SEL policy value: {POLICY}; continuing without policy pre-check",
+                    "POLICY", selPolicy);
+            }
+        }
+        catch (const std::exception& policyErr)
+        {
+            lg2::error("Failed to read SEL policy data, ERROR={ERROR}", "ERROR",
+                       policyErr.what());
+        }
+
         std::string service =
             ipmi::getService(*bus, ipmiSELAddInterface, ipmiSELPath);
         auto addSEL = bus->new_method_call(service.c_str(), ipmiSELPath,
@@ -921,8 +1024,9 @@ ipmi::RspType<> ipmiSenPlatformEvent(ipmi::Context::ptr ctx,
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create D-Bus log entry for SEL, ERROR="
-                  << e.what() << "\n";
+        lg2::error("Failed to create D-Bus log entry for SEL, ERROR={ERROR}",
+                   "ERROR", e.what());
+        return ipmi::responseUnspecifiedError();
     }
 
     if (static_cast<uint8_t>(generatorID) == meId && sensorNum == meSensorNum &&
@@ -1071,7 +1175,9 @@ ipmi::RspType<uint8_t, uint8_t, uint8_t, std::optional<uint8_t>>
     getSensorMaxMin(sensorMap, max, min);
 
     // hardcoded max value as 255 to list pldm sensors
-    if (connection == sensor::pldmService)
+    if (connection == sensor::pldmService ||
+        (connection == sensor::nsmService &&
+         path.find("/energy/") != std::string::npos))
     {
         if (max > 255.0 || max < 1.0 || max < min)
         {
@@ -1267,6 +1373,11 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
     if (status)
     {
         return ipmi::response(status);
+    }
+
+    if (connection == sensor::nsmService)
+    {
+        return ipmi::responseIllegalCommand();
     }
 
     // if none of the threshold mask are set, nothing to do
@@ -1478,7 +1589,8 @@ ipmi::RspType<> ipmiSenSetSensorThresholds(
 }
 
 IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap,
-                                 const std::string& service = "")
+                                 const std::string& service = "",
+                                 const std::string& path = "")
 {
     IPMIThresholds resp;
     auto warningInterface =
@@ -1506,7 +1618,9 @@ IPMIThresholds getIPMIThresholds(const SensorMap& sensorMap,
         getSensorMaxMin(sensorMap, max, min);
 
         // hardcoded max value as 255 to list pldm sensors
-        if (service == sensor::pldmService)
+        if (service == sensor::pldmService ||
+            (service == sensor::nsmService &&
+             path.find("/energy/") != std::string::npos))
         {
             if (max > 255.0 || max < 1.0 || max < min)
             {
@@ -1646,7 +1760,7 @@ ipmi::RspType<uint8_t, // readable
     IPMIThresholds thresholdData;
     try
     {
-        thresholdData = getIPMIThresholds(sensorMap);
+        thresholdData = getIPMIThresholds(sensorMap, connection, path);
     }
     catch (const std::exception&)
     {
@@ -2232,7 +2346,9 @@ bool constructSensorSdr(
     getSensorMaxMin(sensorMap, max, min);
 
     // hardcoded max value as 255 to list pldm sensors
-    if (service == sensor::pldmService)
+    if (service == sensor::pldmService ||
+        (service == sensor::nsmService &&
+         path.find("/energy/") != std::string::npos))
     {
         if (max > 255.0 || max < 1.0 || max < min)
         {
@@ -2343,7 +2459,7 @@ bool constructSensorSdr(
     IPMIThresholds thresholdData;
     try
     {
-        thresholdData = getIPMIThresholds(sensorMap, service);
+        thresholdData = getIPMIThresholds(sensorMap, service, path);
     }
     catch (const std::exception&)
     {

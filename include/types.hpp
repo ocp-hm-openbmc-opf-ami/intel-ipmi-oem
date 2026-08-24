@@ -41,7 +41,7 @@ using GetSubTreeType = std::vector<
 
 using SensorMap = std::map<std::string, std::map<std::string, DbusVariant>>;
 
-using FruMap = std::vector<std::pair<uint8_t, uint8_t>>;
+using FruMap = std::vector<std::pair<uint8_t, uint16_t>>;
 
 namespace types
 {
