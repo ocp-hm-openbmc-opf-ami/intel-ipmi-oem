@@ -879,7 +879,8 @@ ipmi::RspType<uint16_t,             // Record ID
                 phosphor::logging::entry("ERROR=%s", e.what()));
             return ipmi::responseUnspecifiedError();
         }
-        std::variant<std::vector<std::string>> entryData;
+        using additionalDataMap = std::map<std::string, std::string>;
+        std::variant<additionalDataMap> entryData;
         //  Read all the log entry properties.
         auto methodCall =
             bus.new_method_call(loggingService, lastEntryPath.c_str(),
@@ -892,14 +893,11 @@ ipmi::RspType<uint16_t,             // Record ID
         {
             return ipmi::responseUnspecifiedError();
         }
-        std::vector<std::string> Data =
-            std::get<std::vector<std::string>>(entryData);
-        std::map<std::string, std::string> ret;
-        for (const auto& d : Data)
-        {
-            ret.insert(parseEntries(d));
-        }
-        std::map<std::string, std::variant<uint32_t, uint64_t>> SelIdtimestamp;
+        std::map<std::string, std::string> ret =
+            std::get<additionalDataMap>(entryData);
+        std::map<std::string, std::variant<bool, uint32_t, uint64_t,
+                                           std::string, additionalDataMap>>
+            SelIdtimestamp;
         auto method =
             bus.new_method_call(loggingService, lastEntryPath.c_str(),
                                 "org.freedesktop.DBus.Properties", "GetAll");

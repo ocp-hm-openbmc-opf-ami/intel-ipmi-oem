@@ -15,7 +15,11 @@
 */
 
 #pragma once
+#ifdef UNIT_TESTING
+#include <sensorhandler.hpp>
+#else
 #include <phosphor-ipmi-host/sensorhandler.hpp>
+#endif
 
 #include <cstdint>
 
