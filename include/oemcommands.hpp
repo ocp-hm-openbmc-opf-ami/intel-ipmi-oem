@@ -286,6 +286,7 @@ namespace recovery
 static constexpr uint8_t paramTftpServerIp = 0x01;
 static constexpr uint8_t paramImageName = 0x02;
 static constexpr uint8_t paramRecoveryMode = 0x03;
+static constexpr uint8_t paramSdPartition = 0x04;
 } // namespace recovery
 
 namespace network

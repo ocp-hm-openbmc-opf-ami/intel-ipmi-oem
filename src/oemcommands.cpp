@@ -7886,6 +7886,22 @@ ipmi::RspType<> ipmiOEMSetRecoveryInfo(uint8_t parameterSelector,
             }
             return ipmi::responseSuccess();
 
+        case ami::general::recovery::paramSdPartition:
+            if (parameterData.size() != 2)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            {
+                std::string mmcDev = std::to_string(parameterData[0]);
+                std::string mmcPart = std::to_string(parameterData[1])
+                if (!runFwSetEnv("recovery_mmc_dev", mmcDev) ||
+                    !runFwSetEnv("recovery_mmc_part", mmcPart))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
         default:
             return ipmi::responseInvalidFieldRequest();
     }
