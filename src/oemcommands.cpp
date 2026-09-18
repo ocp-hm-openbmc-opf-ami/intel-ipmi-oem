@@ -7893,7 +7893,7 @@ ipmi::RspType<> ipmiOEMSetRecoveryInfo(uint8_t parameterSelector,
             }
             {
                 std::string mmcDev = std::to_string(parameterData[0]);
-                std::string mmcPart = std::to_string(parameterData[1])
+                std::string mmcPart = std::to_string(parameterData[1]);
                 if (!runFwSetEnv("recovery_mmc_dev", mmcDev) ||
                     !runFwSetEnv("recovery_mmc_part", mmcPart))
                 {
