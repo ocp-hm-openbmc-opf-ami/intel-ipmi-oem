@@ -277,6 +277,7 @@ static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
 static constexpr Cmd cmdSetRecoveryInfo = 0xFA;
+static constexpr Cmd cmdGetRecoveryInfo = 0xFB;
 static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
 static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
 static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xCE;
