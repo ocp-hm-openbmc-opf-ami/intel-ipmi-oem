@@ -276,9 +276,19 @@ static constexpr Cmd cmdOEMSetTimezone = 0x9F;
 // 0xF1 to 0xFC reserved for IPMI Firmware update
 static constexpr Cmd cmdSetPreserveConfig = 0xF2;
 static constexpr Cmd cmdGetPreserveConfig = 0xF3;
+static constexpr Cmd cmdSetRecoveryInfo = 0xFA;
+static constexpr Cmd cmdGetRecoveryInfo = 0xFB;
 static constexpr Cmd cmdOEMAddExtendedSel = 0xCC;
 static constexpr Cmd cmdOEMGetExtendedSel = 0xCD;
 static constexpr Cmd cmdOEMGetPartialExtendedSel = 0xCE;
+
+namespace recovery
+{
+static constexpr uint8_t paramTftpServerIp = 0x01;
+static constexpr uint8_t paramImageName = 0x02;
+static constexpr uint8_t paramRecoveryMode = 0x03;
+static constexpr uint8_t paramSdPartition = 0x04;
+} // namespace recovery
 
 namespace network
 {

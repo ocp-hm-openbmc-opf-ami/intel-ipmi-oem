@@ -71,6 +71,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -7790,6 +7792,259 @@ ipmi::RspType<> ipmiOEMSetPreserveConfig(uint32_t preserve)
     }
 }
 
+static std::string shellEscapeSingleQuotes(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (char c : value)
+    {
+        if (c == '\'')
+        {
+            escaped += "'\\''";
+        }
+        else
+        {
+            escaped += c;
+        }
+    }
+    return escaped;
+}
+
+static bool runFwSetEnv(const std::string& name, const std::string& value)
+{
+    std::string cmd = "fw_setenv " + name + " '" +
+                      shellEscapeSingleQuotes(value) + "'";
+    return (std::system(cmd.c_str()) == 0);
+}
+
+static bool isPrintableAscii(const std::vector<uint8_t>& data)
+{
+    for (uint8_t c : data)
+    {
+        if (c < 0x20 || c > 0x7e)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool runFwPrintEnv(const std::string& name, std::string& value)
+{
+    std::string cmd = "fw_printenv -n " + name + " 2>/dev/null";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe)
+    {
+        return false;
+    }
+
+    std::array<char, 128> buffer{};
+    value.clear();
+    while (fgets(buffer.data(), buffer.size(), pipe) != nullptr)
+    {
+        value += buffer.data();
+    }
+    int rc = pclose(pipe);
+
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
+    {
+        value.pop_back();
+    }
+
+    return (rc == 0);
+}
+
+static bool parseUint8(const std::string& value, uint8_t& result)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+    char* end = nullptr;
+    unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || parsed > 0xff)
+    {
+        return false;
+    }
+    result = static_cast<uint8_t>(parsed);
+    return true;
+}
+
+ipmi::RspType<> ipmiOEMSetRecoveryInfo(uint8_t parameterSelector,
+                                       uint8_t blockSelector,
+                                       std::vector<uint8_t> parameterData)
+{
+    if (blockSelector != 0)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    switch (parameterSelector)
+    {
+        case ami::general::recovery::paramTftpServerIp:
+            if (parameterData.size() != 4)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            {
+                std::string ip = std::to_string(parameterData[0]) + "." +
+                                 std::to_string(parameterData[1]) + "." +
+                                 std::to_string(parameterData[2]) + "." +
+                                 std::to_string(parameterData[3]);
+                if (!runFwSetEnv("recovery_tftp_ip", ip))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        case ami::general::recovery::paramImageName:
+            if (parameterData.empty() || parameterData.size() > 42 ||
+                !isPrintableAscii(parameterData))
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            {
+                std::string imageName(parameterData.begin(), parameterData.end());
+                if (!runFwSetEnv("recovery_bootfile", imageName))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        case ami::general::recovery::paramRecoveryMode:
+            if (parameterData.size() != 1 || parameterData[0] > 2)
+            {
+                return ipmi::responseInvalidFieldRequest();
+            }
+            {
+                static const char* const modes[] = {"auto", "mmc", "tftp"};
+                if (!runFwSetEnv("recovery_mode_selection",
+                                 modes[parameterData[0]]))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        case ami::general::recovery::paramSdPartition:
+            if (parameterData.size() != 2)
+            {
+                return ipmi::responseReqDataLenInvalid();
+            }
+            {
+                std::string mmcDev = std::to_string(parameterData[0]);
+                std::string mmcPart = std::to_string(parameterData[1]);
+                bool devOk = runFwSetEnv("recovery_mmc_dev", mmcDev);
+                bool partOk = runFwSetEnv("recovery_mmc_part", mmcPart);
+                if (!devOk || !partOk)
+                {
+                    if (devOk != partOk)
+                    {
+                        lg2::error(
+                            "Partial recovery eMMC device/partition update: "
+                            "recovery_mmc_dev applied={DEVOK}, "
+                            "recovery_mmc_part applied={PARTOK}",
+                            "DEVOK", devOk, "PARTOK", partOk);
+                    }
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            return ipmi::responseSuccess();
+
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+}
+
+ipmi::RspType<std::vector<uint8_t>>
+    ipmiOEMGetRecoveryInfo(uint8_t parameterSelector, uint8_t blockSelector)
+{
+    if (blockSelector != 0)
+    {
+        return ipmi::responseInvalidFieldRequest();
+    }
+
+    std::string value;
+    std::vector<uint8_t> data;
+
+    switch (parameterSelector)
+    {
+        case ami::general::recovery::paramTftpServerIp:
+            if (!runFwPrintEnv("recovery_tftp_ip", value))
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+            {
+                struct in_addr addr = {};
+                if (inet_pton(AF_INET, value.c_str(), &addr) != 1)
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+                const uint8_t* raw =
+                    reinterpret_cast<const uint8_t*>(&addr.s_addr);
+                data.assign(raw, raw + 4);
+            }
+            break;
+
+        case ami::general::recovery::paramImageName:
+            if (!runFwPrintEnv("recovery_bootfile", value))
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+            data.assign(value.begin(), value.end());
+            break;
+
+        case ami::general::recovery::paramRecoveryMode:
+            if (!runFwPrintEnv("recovery_mode_selection", value))
+            {
+                return ipmi::responseUnspecifiedError();
+            }
+            {
+                static const char* const modes[] = {"auto", "mmc", "tftp"};
+                bool found = false;
+                for (uint8_t i = 0; i < 3; ++i)
+                {
+                    if (value == modes[i])
+                    {
+                        data.push_back(i);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+            }
+            break;
+
+        case ami::general::recovery::paramSdPartition:
+            {
+                std::string devStr;
+                std::string partStr;
+                uint8_t mmcDev = 0;
+                uint8_t mmcPart = 0;
+                if (!runFwPrintEnv("recovery_mmc_dev", devStr) ||
+                    !runFwPrintEnv("recovery_mmc_part", partStr) ||
+                    !parseUint8(devStr, mmcDev) ||
+                    !parseUint8(partStr, mmcPart))
+                {
+                    return ipmi::responseUnspecifiedError();
+                }
+                data.push_back(mmcDev);
+                data.push_back(mmcPart);
+            }
+            break;
+
+        default:
+            return ipmi::responseInvalidFieldRequest();
+    }
+
+    return ipmi::responseSuccess(data);
+}
+
 void AddExtendedlogEntry(uint8_t sensorNumber, uint8_t sensorType,
                          const std::vector<uint8_t>& extendedData,
                          std::vector<uint8_t>& selDataRecord,
@@ -8521,6 +8776,14 @@ static void registerOEMFunctions(void)
     registerHandler(prioOemBase, ami::netFnGeneral,
                     ami::general::cmdGetPreserveConfig, Privilege::User,
                     ipmiOEMGetPreserveConfig);
+
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdSetRecoveryInfo, Privilege::Admin,
+                    ipmiOEMSetRecoveryInfo);
+
+    registerHandler(prioOemBase, ami::netFnGeneral,
+                    ami::general::cmdGetRecoveryInfo, Privilege::Admin,
+                    ipmiOEMGetRecoveryInfo);
 
     // <Add Extended SEL data>
     registerHandler(prioOemBase, ami::netFnGeneral,
