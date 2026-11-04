@@ -1888,15 +1888,19 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
     {
         std::string objpath("");
         uint8_t typeFromPath;
+        // True when sensor number exists in SDR but under a different type
+        bool sensorNumberTypeMismatch = false;
         try
         {
             objpath = getPathFromSensorNumber(sensorNumber, sensorType);
-            typeFromPath = getSensorTypeFromPath(objpath);
-            if (typeFromPath !=
-                sensorType) // if sensorType not matching, we assume sensor not
-                            // available so prioprity is givien to IPMI Type
+            if (!objpath.empty())
             {
-                objpath.clear();
+                typeFromPath = getSensorTypeFromPath(objpath);
+                if (typeFromPath != sensorType)
+                {
+                    objpath.clear();
+                    sensorNumberTypeMismatch = true;
+                }
             }
         }
         catch (...)
@@ -1978,7 +1982,6 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
         addData["RECORD_TYPE"] = std::to_string(recordType);
         addData["SENSOR_TYPE"] = std::to_string(sensorType);
         addData["EVENT_TYPE"] = std::to_string(eventType);
-        addData["SENSOR_NUMBER"] = std::to_string(sensorNumber);
 #ifdef FEATURE_STATIC_SENSOR_NUMBER
         std::shared_ptr<SensorNumMap> sensorNumMapPtr;
         ::details::getSensorNumMap(sensorNumMapPtr);
@@ -1999,12 +2002,14 @@ ipmi::RspType<uint16_t> ipmiStorageAddSELEntry(
             }
         }
 
-        if (!sensorNumValid)
-        {
-            sensorNumber = reservedSensorNumber;
-        }
-        addData["SENSOR_NUM"] = std::to_string(sensorNumber);
+        // Local only; must not mutate sensorNumber used by SENSOR_NUMBER below
+        addData["SENSOR_NUM"] = std::to_string(
+            sensorNumValid ? sensorNumber : reservedSensorNumber);
 #endif // FEATURE_STATIC_SENSOR_NUMBER
+
+        // FFh = reserved (IPMI Table 5-3); only forced on a real type mismatch
+        addData["SENSOR_NUMBER"] = std::to_string(
+            sensorNumberTypeMismatch ? reservedSensorNumber : sensorNumber);
         try
         {
             std::string service =
